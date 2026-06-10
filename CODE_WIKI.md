@@ -567,30 +567,44 @@ uv run python main.py --init_db sqlite
 
 ### 7.2 CLI 方式运行
 
-```bash
-# 基本运行（使用配置文件默认值）
-uv run python main.py
+> **关键配置说明**（配置位置：`config/base_config.py`）
+>
+> | 配置项 | 当前值 | 说明 |
+> |--------|--------|------|
+> | `KEYWORDS` | `"鸿蒙"` | 搜索关键词，英文逗号分隔多个词 |
+> | `CRAWLER_MAX_NOTES_COUNT` | `200` | 每个关键词抓取帖子数量上限 |
+> | `ENABLE_GET_COMMENTS` | `False` | 是否抓取评论 |
+> | `ENABLE_GET_SUB_COMMENTS` | `False` | 是否抓取子评论 |
+> | `SAVE_DATA_OPTION` | `"sqlite"` | 存储方式：sqlite / csv / json / jsonl / excel / postgres / mongodb |
+>
+> 默认存储数据库：`database/sqlite_tables.db`（SQLite）
 
-# 指定平台和关键词
-uv run python main.py --platform xhs --keywords "关键词1,关键词2" --type search
+```bash
+cd MediaCrawler
+
+# 标准运行命令（使用配置文件中的默认配置）
+uv run main.py --platform xhs
+
+# 指定平台和关键词（覆盖配置文件）
+uv run main.py --platform xhs --keywords "关键词1,关键词2" --type search
 
 # 指定存储方式和爬取数量
-uv run python main.py --platform dy --save_data_option sqlite --max_count 50
+uv run main.py --platform dy --save_data_option sqlite --max_count 50
 
 # 详情模式
-uv run python main.py --platform xhs --type detail --specified_id "笔记URL1,笔记URL2"
+uv run main.py --platform xhs --type detail --specified_id "笔记URL1,笔记URL2"
 
 # 创作者模式
-uv run python main.py --platform bili --type creator --creator_id "创作者URL1,创作者URL2"
+uv run main.py --platform bili --type creator --creator_id "创作者URL1,创作者URL2"
 
 # 启用评论爬取
-uv run python main.py --platform xhs --get_comment true --get_sub_comment true
+uv run main.py --platform xhs --get_comment true --get_sub_comment true
 
 # 测试模式（不入库，生成HTML报告验证）
-uv run python main.py --platform xhs --test_mode
+uv run main.py --platform xhs --test_mode
 
 # Cookie 登录
-uv run python main.py --platform xhs --lt cookie --cookies "your_cookie_string"
+uv run main.py --platform xhs --lt cookie --cookies "your_cookie_string"
 ```
 
 ### 7.3 WebUI 方式运行
