@@ -41,9 +41,10 @@ class XiaoHongShuExtractor:
             # Either a CAPTCHA appeared or the note doesn't exist
             return None
 
-        state = re.findall(r"window.__INITIAL_STATE__=({.*})</script>", html)[
-            0
-        ].replace("undefined", '""')
+        states = re.findall(r"window.__INITIAL_STATE__=({.*})</script>", html)
+        if not states:
+            return None
+        state = states[0].replace("undefined", '""')
         if state != "{}":
             note_dict = humps.decamelize(json.loads(state))
             return note_dict["note"]["note_detail_map"][note_id]["note"]
@@ -66,4 +67,4 @@ class XiaoHongShuExtractor:
         info = json.loads(match.group(1).replace(":undefined", ":null"), strict=False)
         if info is None:
             return None
-        return info.get("user").get("userPageData")
+        return info.get("user", {}).get("userPageData")

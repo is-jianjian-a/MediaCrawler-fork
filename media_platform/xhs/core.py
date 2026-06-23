@@ -144,27 +144,34 @@ class XiaoHongShuCrawler(AbstractCrawler):
                 store, keyword, config.CRAWLER_MAX_NOTES_COUNT
             )
             if adjusted_max_count <= 0:
-                utils.logger.info(f"[XiaoHongShuCrawler.search] Keyword '{keyword}' already fully crawled, skipping...")
+                utils.logger.info(f"[XiaoHongShuCrawler.search] 关键词'{keyword}'已完全抓取，跳过...")
                 return 0, global_existing_ids
             return adjusted_max_count, global_existing_ids
         return config.CRAWLER_MAX_NOTES_COUNT, set()
 
     def _filter_search_items(self, items: list, existing_ids_set: Set[str]) -> list:
-        """Filter out non-note items and already-existing notes from search results."""
+        """Filter out non-note items. Keep existing notes for comment re-crawl."""
         filtered_items = []
         for post_item in items:
             if post_item.get("model_type") in ("rec_query", "hot_query"):
                 continue
             note_id = post_item.get("id")
-            if note_id in existing_ids_set:
-                utils.logger.debug(f"Skip existing note: {note_id}")
-                continue
+            post_item["_skip_detail"] = note_id in existing_ids_set
+            if post_item["_skip_detail"]:
+                utils.logger.debug(f"Existing note (skip detail, keep for comments): {note_id}")
             filtered_items.append(post_item)
         return filtered_items
 
     async def _store_note_detail(self, note_detail: Dict, note_id: str,
                                   existing_ids_set: Set[str], test_mode_items: list,
-                                  search_list_fallback: Optional[Dict] = None) -> tuple:
+                                  search_list_fallback: Optional[Dict] = None,
+                                  skip_detail: bool = False) -> tuple:
+        if skip_detail:
+            # Existing note: skip detail API, keep for comments
+            if note_id not in existing_ids_set:
+                existing_ids_set.add(note_id)
+            return True, existing_ids_set, 0, False
+
         data_to_store = note_detail
         is_fallback = False
         if not data_to_store and search_list_fallback:
@@ -271,8 +278,9 @@ class XiaoHongShuCrawler(AbstractCrawler):
             api_comment_count = 0
             fallback_count = 0
             prev_fallback_count = 0
+            total_processed = 0  # Total notes processed (new + existing)
 
-            while adjusted_max_count > 0 and page <= max_pages:
+            while actual_stored_count < adjusted_max_count and page <= max_pages:
                 if page < start_page:
                     utils.logger.info(f"[XiaoHongShuCrawler.search] Skip page {page}")
                     page += 1
@@ -296,7 +304,9 @@ class XiaoHongShuCrawler(AbstractCrawler):
                     semaphore = asyncio.Semaphore(config.MAX_CONCURRENCY_NUM)
 
                     filtered_items = self._filter_search_items(notes_res.get("items", {}), existing_ids_set)
-                    utils.logger.info(f"[search] keyword=\"{keyword}\" page={page} | fetched={len(notes_res.get('items', []))} filtered={len(filtered_items)} (exist in DB) | storing {len(filtered_items)} notes")
+                    new_count = sum(1 for item in filtered_items if not item.get("_skip_detail"))
+                    exist_count = len(filtered_items) - new_count
+                    utils.logger.info(f"[搜索] 关键词=\"{keyword}\" 第{page}页 | 原始{len(notes_res.get('items', []))}条 过滤后{len(filtered_items)}条(新增{new_count}条+已存在{exist_count}条) | 处理{len(filtered_items)}条帖子")
 
                     if not filtered_items:
                         consecutive_empty_pages += 1
@@ -318,6 +328,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
                             xsec_source=post_item.get("xsec_source"),
                             xsec_token=post_item.get("xsec_token"),
                             semaphore=semaphore,
+                            skip_detail=post_item.get("_skip_detail", False),
                         ) for post_item in filtered_items
                     ]
                     note_details = await asyncio.gather(*task_list)
@@ -330,10 +341,12 @@ class XiaoHongShuCrawler(AbstractCrawler):
                     prev_fallback_count = fallback_count
                     for idx, note_detail in enumerate(note_details):
                         note_id = filtered_items[idx].get("id")
+                        skip_detail = filtered_items[idx].get("_skip_detail", False)
                         total_attempted += 1
                         success, existing_ids_set, stored_delta, is_fallback = await self._store_note_detail(
                             note_detail, note_id, existing_ids_set, test_mode_items,
-                            search_list_fallback=filtered_items[idx]
+                            search_list_fallback=filtered_items[idx],
+                            skip_detail=skip_detail,
                         )
                         if is_fallback:
                             fallback_count += 1
@@ -341,14 +354,15 @@ class XiaoHongShuCrawler(AbstractCrawler):
                             stored_note_id = note_detail.get("note_id") if note_detail else note_id
                             note_ids.append(stored_note_id)
                             xsec_tokens.append(filtered_items[idx].get("xsec_token", ""))
-                            adjusted_max_count -= 1
-                            actual_stored_count += stored_delta
+                            total_processed += 1  # Count both new and existing notes
+                            if not skip_detail:
+                                actual_stored_count += stored_delta
                             consecutive_failures = 0
                         else:
                             failed_count += 1
                             consecutive_failures += 1
 
-                    utils.logger.info(f"[search] keyword=\"{keyword}\" page={page} done | new={actual_stored_count - prev_stored_count} failed={failed_count - prev_failed_count} fallback={fallback_count - prev_fallback_count} | progress: {actual_stored_count}/{config.CRAWLER_MAX_NOTES_COUNT} | API: search={api_search_count} detail={api_detail_count} comment={api_comment_count}")
+                    utils.logger.info(f"[搜索] 关键词=\"{keyword}\" 第{page}页完成 | 新写入{actual_stored_count - prev_stored_count}条 失败{failed_count - prev_failed_count}条 降级{fallback_count - prev_fallback_count}条 | 进度: 新帖{actual_stored_count}/{adjusted_max_count} 总处理{total_processed}条 | API调用: 搜索{api_search_count}次 详情{api_detail_count}次 评论{api_comment_count}次")
 
                     if total_attempted > 0:
                         failure_rate = failed_count / total_attempted
@@ -371,7 +385,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
                     await smart_sleep()
                     utils.logger.debug(f"Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after page {page-1}")
 
-                    if adjusted_max_count <= 0:
+                    if actual_stored_count >= adjusted_max_count:
                         stop_reason = "Reached target count"
                         utils.logger.info(f"[XiaoHongShuCrawler.search] Reached target count: {config.CRAWLER_MAX_NOTES_COUNT}")
                         break
@@ -495,18 +509,12 @@ class XiaoHongShuCrawler(AbstractCrawler):
         xsec_source: str,
         xsec_token: str,
         semaphore: asyncio.Semaphore,
+        skip_detail: bool = False,
     ) -> Optional[Dict]:
-        """Get note detail
+        """Get note detail. If skip_detail=True, return empty dict to avoid API call."""
+        if skip_detail:
+            return {"note_id": note_id, "_skip_detail": True}
 
-        Args:
-            note_id:
-            xsec_source:
-            xsec_token:
-            semaphore:
-
-        Returns:
-            Dict: note detail
-        """
         note_detail = None
         utils.logger.debug(f"[get_note_detail_async_task] Begin get note detail, note_id: {note_id}")
         async with semaphore:
@@ -542,7 +550,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
                 return None
 
     async def batch_get_note_comments(self, note_list: List[str], xsec_tokens: List[str]):
-        """Batch get note comments"""
+        """Batch get note comments with deduplication"""
         if not config.ENABLE_GET_COMMENTS:
             utils.logger.debug(f"[XiaoHongShuCrawler.batch_get_note_comments] Crawling comment mode is not enabled")
             return
@@ -550,15 +558,33 @@ class XiaoHongShuCrawler(AbstractCrawler):
         utils.logger.debug(f"[XiaoHongShuCrawler.batch_get_note_comments] Begin batch get note comments, note list: {note_list}")
         semaphore = asyncio.Semaphore(config.MAX_CONCURRENCY_NUM)
         task_list: List[Task] = []
+        
+        # Pre-fetch existing comment_ids for each note
+        store = xhs_store.XhsStoreFactory.create_store()
         for index, note_id in enumerate(note_list):
+            existing_ids = await self._get_existing_comment_ids(store, note_id)
             task = asyncio.create_task(
-                self.get_comments(note_id=note_id, xsec_token=xsec_tokens[index], semaphore=semaphore),
+                self.get_comments(
+                    note_id=note_id,
+                    xsec_token=xsec_tokens[index],
+                    semaphore=semaphore,
+                    existing_comment_ids=existing_ids,
+                ),
                 name=note_id,
             )
             task_list.append(task)
         await asyncio.gather(*task_list)
 
-    async def get_comments(self, note_id: str, xsec_token: str, semaphore: asyncio.Semaphore):
+    async def _get_existing_comment_ids(self, store, note_id: str) -> Set[str]:
+        """Fetch existing comment_ids for a note from DB"""
+        try:
+            if hasattr(store, 'get_comment_ids_by_note_id'):
+                return await store.get_comment_ids_by_note_id(note_id)
+        except Exception as e:
+            utils.logger.debug(f"[_get_existing_comment_ids] Error: {e}")
+        return set()
+
+    async def get_comments(self, note_id: str, xsec_token: str, semaphore: asyncio.Semaphore, existing_comment_ids: Optional[Set[str]] = None):
         """Get note comments with keyword filtering and quantity limitation"""
         async with semaphore:
             utils.logger.info(f"[comments] fetching comments for note_id={note_id}")
@@ -570,11 +596,12 @@ class XiaoHongShuCrawler(AbstractCrawler):
                 crawl_interval=crawl_interval,
                 callback=xhs_store.batch_update_xhs_note_comments,
                 max_count=config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES,
+                existing_comment_ids=existing_comment_ids,
             )
 
-            # Sleep after fetching comments
+            # Sleep only between notes (inter-note), not inside comment pagination
             await asyncio.sleep(crawl_interval)
-            utils.logger.debug(f"Sleeping for {crawl_interval} seconds after fetching comments for note {note_id}")
+            utils.logger.info(f"[comments] done note_id={note_id}, sleeping {crawl_interval}s")
 
     async def create_xhs_client(self, httpx_proxy: Optional[str]) -> XiaoHongShuClient:
         """Create Xiaohongshu client"""
@@ -675,7 +702,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
         utils.logger.info("[XiaoHongShuCrawler.close] Browser context closed ...")
 
     async def get_notice_media(self, note_detail: Dict):
-        if not config.ENABLE_GET_MEIDAS:
+        if not config.ENABLE_GET_MEDIAS:
             utils.logger.debug(f"[XiaoHongShuCrawler.get_notice_media] Crawling image mode is not enabled")
             return
         await self.get_note_images(note_detail)
@@ -687,7 +714,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
         Args:
             note_item: Note item dictionary
         """
-        if not config.ENABLE_GET_MEIDAS:
+        if not config.ENABLE_GET_MEDIAS:
             return
         note_id = note_item.get("note_id")
         image_list: List[Dict] = note_item.get("image_list", [])
@@ -715,7 +742,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
         Args:
             note_item: Note item dictionary
         """
-        if not config.ENABLE_GET_MEIDAS:
+        if not config.ENABLE_GET_MEDIAS:
             return
         note_id = note_item.get("note_id")
 

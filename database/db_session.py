@@ -71,7 +71,7 @@ def get_async_engine(db_type: str = None):
     else:
         raise ValueError(f"Unsupported database type: {db_type}")
 
-    engine = create_async_engine(db_url, echo=False, connect_args={"timeout": 30} if db_type == "sqlite" else {})
+    engine = create_async_engine(db_url, echo=False)
     _engines[db_type] = engine
     return engine
 

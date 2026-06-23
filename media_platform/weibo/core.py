@@ -375,7 +375,7 @@ class WeiboCrawler(AbstractCrawler):
         :param mblog:
         :return:
         """
-        if not config.ENABLE_GET_MEIDAS:
+        if not config.ENABLE_GET_MEDIAS:
             utils.logger.debug(f"[WeiboCrawler.get_note_images] Crawling image mode is not enabled")
             return
 

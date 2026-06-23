@@ -91,7 +91,6 @@ def get_unix_time_from_time_str(time_str):
         return int(time.mktime(tm_object))
     except Exception as e:
         return 0
-    pass
 
 
 def get_unix_timestamp():
@@ -117,8 +116,8 @@ def rfc2822_to_timestamp(rfc2822_time):
     # Convert RFC 2822 time string to datetime object
     dt_object = datetime.strptime(rfc2822_time, rfc2822_format)
 
-    # Convert datetime object to UTC time
-    dt_utc = dt_object.replace(tzinfo=timezone.utc)
+    # Convert datetime object to UTC time (astimezone converts, replace would just relabel)
+    dt_utc = dt_object.astimezone(timezone.utc)
 
     # Calculate Unix timestamp from UTC time
     timestamp = int(dt_utc.timestamp())

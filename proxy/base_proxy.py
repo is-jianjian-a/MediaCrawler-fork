@@ -80,5 +80,5 @@ class IpCache:
                     continue
                 all_ip_list.append(IpInfoModel(**json.loads(ip_value)))
         except Exception as e:
-            utils.logger.error("[IpCache.load_all_ip] get ip err from redis db", e)
+            utils.logger.error(f"[IpCache.load_all_ip] get ip err from redis db: {e}")
         return all_ip_list

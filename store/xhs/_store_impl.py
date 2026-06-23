@@ -21,8 +21,9 @@
 # @Desc    : Xiaohongshu storage implementation class
 import json
 import os
+import re
 from datetime import datetime
-from typing import List, Dict, Any
+from typing import Dict, List, Set
 
 from sqlalchemy import func, select, update, delete
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -38,6 +39,31 @@ from var import crawler_type_var
 from database.mongodb_store_base import MongoDBStoreBase
 from tools import utils
 from store.excel_store_base import ExcelStoreBase
+
+
+def _parse_count(value) -> int:
+    """Parse XHS API count values handling "X.X万" format.
+
+    Examples:
+        "2.6万" → 26000
+        "1234"  → 1234
+        None     → 0
+    """
+    if not value:
+        return 0
+    if isinstance(value, (int, float)):
+        return int(value)
+    value = str(value).strip()
+    if not value:
+        return 0
+    match = re.match(r"^([\d.]+)万$", value)
+    if match:
+        return int(float(match.group(1)) * 10000)
+    try:
+        return int(float(value))
+    except (ValueError, TypeError):
+        return 0
+
 
 class XhsCsvStoreImplement(AbstractStore):
     def __init__(self, **kwargs):
@@ -155,12 +181,12 @@ class XhsDbStoreImplement(AbstractStore):
             video_url=content_item.get("video_url"),
             time=content_item.get("time"),
             last_update_time=content_item.get("last_update_time"),
-            liked_count=int(content_item.get("liked_count") or 0),
-            collected_count=int(content_item.get("collected_count") or 0),
-            comment_count=int(content_item.get("comment_count") or 0),
-            share_count=int(content_item.get("share_count") or 0),
-            image_list=json.dumps(content_item.get("image_list")),
-            tag_list=json.dumps(content_item.get("tag_list")),
+            liked_count=_parse_count(content_item.get("liked_count")),
+            collected_count=_parse_count(content_item.get("collected_count")),
+            comment_count=_parse_count(content_item.get("comment_count")),
+            share_count=_parse_count(content_item.get("share_count")),
+            image_list=content_item.get("image_list", ""),
+            tag_list=content_item.get("tag_list", ""),
             note_url=content_item.get("note_url"),
             source_keyword=content_item.get("source_keyword", ""),
             xsec_token=content_item.get("xsec_token", ""),
@@ -173,10 +199,10 @@ class XhsDbStoreImplement(AbstractStore):
         last_modify_ts = int(get_current_timestamp())
         update_data = {
             "last_modify_ts": last_modify_ts,
-            "liked_count": int(content_item.get("liked_count") or 0),
-            "collected_count": int(content_item.get("collected_count") or 0),
-            "comment_count": int(content_item.get("comment_count") or 0),
-            "share_count": int(content_item.get("share_count") or 0),
+            "liked_count": _parse_count(content_item.get("liked_count")),
+            "collected_count": _parse_count(content_item.get("collected_count")),
+            "comment_count": _parse_count(content_item.get("comment_count")),
+            "share_count": _parse_count(content_item.get("share_count")),
             "last_update_time": content_item.get("last_update_time"),
         }
         stmt = update(XhsNote).where(XhsNote.note_id == note_id).values(**update_data)
@@ -199,6 +225,13 @@ class XhsDbStoreImplement(AbstractStore):
             else:
                 await self.add_comment(session, comment_item)
 
+    async def get_comment_ids_by_note_id(self, note_id: str) -> Set[str]:
+        """Fetch all comment_ids for a given note_id."""
+        async with get_session() as session:
+            stmt = select(XhsNoteComment.comment_id).where(XhsNoteComment.note_id == note_id)
+            result = await session.execute(stmt)
+            return {row[0] for row in result.all() if row[0]}
+
     async def add_comment(self, session: AsyncSession, comment_item: Dict):
         add_ts = int(get_current_timestamp())
         last_modify_ts = int(get_current_timestamp())
@@ -213,10 +246,10 @@ class XhsDbStoreImplement(AbstractStore):
             create_time=comment_item.get("create_time"),
             note_id=comment_item.get("note_id"),
             content=comment_item.get("content"),
-            sub_comment_count=int(comment_item.get("sub_comment_count", 0) or 0),
-            pictures=json.dumps(comment_item.get("pictures")),
+            sub_comment_count=_parse_count(comment_item.get("sub_comment_count", 0)),
+            pictures=comment_item.get("pictures", ""),
             parent_comment_id=str(comment_item.get("parent_comment_id", "")),
-            like_count=int(comment_item.get("like_count") or 0),
+            like_count=_parse_count(comment_item.get("like_count")),
             raw_data=comment_item.get("raw_data", "")
         )
         session.add(comment)
@@ -226,8 +259,8 @@ class XhsDbStoreImplement(AbstractStore):
         last_modify_ts = int(get_current_timestamp())
         update_data = {
             "last_modify_ts": last_modify_ts,
-            "like_count": int(comment_item.get("like_count") or 0),
-            "sub_comment_count": int(comment_item.get("sub_comment_count", 0) or 0),
+            "like_count": _parse_count(comment_item.get("like_count")),
+            "sub_comment_count": _parse_count(comment_item.get("sub_comment_count", 0)),
         }
         stmt = update(XhsNoteComment).where(XhsNoteComment.comment_id == comment_id).values(**update_data)
         await session.execute(stmt)
@@ -262,7 +295,7 @@ class XhsDbStoreImplement(AbstractStore):
             follows=int(creator_item.get("follows") or 0),
             fans=int(creator_item.get("fans") or 0),
             interaction=int(creator_item.get("interaction") or 0),
-            tag_list=json.dumps(creator_item.get("tag_list"))
+            tag_list=creator_item.get("tag_list", "{}"),
         )
         session.add(creator)
 
@@ -277,7 +310,7 @@ class XhsDbStoreImplement(AbstractStore):
             "follows": int(creator_item.get("follows") or 0),
             "fans": int(creator_item.get("fans") or 0),
             "interaction": int(creator_item.get("interaction") or 0),
-            "tag_list": json.dumps(creator_item.get("tag_list"))
+            "tag_list": creator_item.get("tag_list", "{}")
         }
         stmt = update(XhsCreator).where(XhsCreator.user_id == user_id).values(**update_data)
         await session.execute(stmt)

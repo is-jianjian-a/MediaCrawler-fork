@@ -24,7 +24,7 @@ PLATFORM = "xhs"  # Platform, xhs | dy | ks | bili | wb | tieba | zhihu
 # 开启后 API 走 webapi.rednote.com，cookie 域使用 .rednote.com
 XHS_INTERNATIONAL = False
 
-KEYWORDS ="鸿蒙"  # Keyword search configuration, separated by English commas
+KEYWORDS ="手机拍照,手机拍照哪款好,华为拍照优缺点,苹果拍照优缺点,手机影像排行榜,手机影像"  # Keyword search configuration, separated by English commas
 LOGIN_TYPE = "qrcode"  # qrcode or phone or cookie
 COOKIES = ""
 CRAWLER_TYPE = (
@@ -32,14 +32,22 @@ CRAWLER_TYPE = (
 )
 
 # 控制爬取的帖子/视频数量
-CRAWLER_MAX_NOTES_COUNT = 200
+CRAWLER_MAX_NOTES_COUNT = 100
 # Whether to enable comment crawling mode. Comment crawling is enabled by default.
-ENABLE_GET_COMMENTS = False
+ENABLE_GET_COMMENTS = True
 # Control the number of crawled first-level comments (single video/post)
-CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES = 100
+CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES = 200
 # Whether to enable the mode of crawling second-level comments. By default, crawling of second-level comments is not enabled.
 # If the old version of the project uses db, you need to refer to schema/tables.sql line 287 to add table fields.
-ENABLE_GET_SUB_COMMENTS = False
+ENABLE_GET_SUB_COMMENTS = True
+
+# Crawl interval
+# 是否启用随机睡眠间隔
+ENABLE_RANDOM_SLEEP = True
+# 随机睡眠的最小时间（秒）
+CRAWLER_MIN_SLEEP_SEC = 20
+# 随机睡眠的最大时间（秒）
+CRAWLER_MAX_SLEEP_SEC = 40
 
 # Whether to enable IP proxy
 ENABLE_IP_PROXY = False
@@ -121,7 +129,7 @@ ENABLE_SMART_CRAWLER = True
 MAX_CONCURRENCY_NUM = 1
 
 # Whether to enable crawling media mode (including image or video resources), crawling media is not enabled by default
-ENABLE_GET_MEIDAS = False
+ENABLE_GET_MEDIAS = False
 
 # 测试模式配置
 ENABLE_TEST_MODE = False  # 开启后不入库，只生成 HTML 报告用于验证
@@ -144,13 +152,6 @@ STOP_WORDS_FILE = "./docs/hit_stopwords.txt"
 # Chinese font file path
 FONT_PATH = "./docs/STZHONGS.TTF"
 
-# Crawl interval
-# 是否启用随机睡眠间隔
-ENABLE_RANDOM_SLEEP = True
-# 随机睡眠的最小时间（秒）
-CRAWLER_MIN_SLEEP_SEC = 10
-# 随机睡眠的最大时间（秒）
-CRAWLER_MAX_SLEEP_SEC = 20
 
 # 允许的最大失败比例（0-1），超过此比例程序中断
 CRAWLER_MAX_FAILURE_RATE = 0.3

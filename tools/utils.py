@@ -20,18 +20,37 @@
 
 import argparse
 import logging
+import os
 
 from .crawler_util import *
 from .slider_util import *
 from .time_util import *
 
 
-def init_loging_config():
+def init_logging_config():
     level = logging.INFO
+    log_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
+    os.makedirs(log_dir, exist_ok=True)
+
+    handlers = [logging.StreamHandler()]
+    try:
+        from logging.handlers import RotatingFileHandler
+        fh = RotatingFileHandler(
+            os.path.join(log_dir, "crawler.log"),
+            maxBytes=10 * 1024 * 1024,  # 10MB rotate
+            backupCount=3,
+            encoding="utf-8",
+        )
+        fh.setLevel(level)
+        handlers.append(fh)
+    except Exception:
+        pass  # fallback: console only
+
     logging.basicConfig(
         level=level,
         format="%(asctime)s %(name)s %(levelname)s (%(filename)s:%(lineno)d) - %(message)s",
-        datefmt='%Y-%m-%d %H:%M:%S'
+        datefmt='%Y-%m-%d %H:%M:%S',
+        handlers=handlers,
     )
     _logger = logging.getLogger("MediaCrawler")
     _logger.setLevel(level)
@@ -42,7 +61,7 @@ def init_loging_config():
     return _logger
 
 
-logger = init_loging_config()
+logger = init_logging_config()
 
 def str2bool(v):
     if isinstance(v, bool):

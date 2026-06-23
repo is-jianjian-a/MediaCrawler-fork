@@ -59,7 +59,7 @@ def parse_kuaidaili_proxy(proxy_info: str) -> KuaidailiProxyModel:
 
     pattern = r'(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(\d{1,5}),(\d+)'
     match = re.search(pattern, proxy_info)
-    if not match.groups():
+    if not match or not match.groups():
         raise Exception("not match kuaidaili proxy info")
 
     return KuaidailiProxyModel(

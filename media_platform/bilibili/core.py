@@ -686,7 +686,7 @@ class BilibiliCrawler(AbstractCrawler):
         :param semaphore:
         :return:
         """
-        if not config.ENABLE_GET_MEIDAS:
+        if not config.ENABLE_GET_MEDIAS:
             utils.logger.debug(f"[BilibiliCrawler.get_bilibili_video] Crawling image mode is not enabled")
             return
         video_item_view: Dict = video_item.get("View")

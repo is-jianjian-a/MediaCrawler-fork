@@ -22,13 +22,22 @@
 # @Time    : 2024/1/14 17:34
 # @Desc    :
 import json
-from typing import Dict, List
+from typing import Dict, List, Set
 
 import config
 from var import source_keyword_var
 
-from .xhs_store_media import *
-from ._store_impl import *
+from base.base_crawler import AbstractStore
+from .xhs_store_media import XiaoHongShuImage, XiaoHongShuVideo
+from ._store_impl import (
+    XhsCsvStoreImplement,
+    XhsDbStoreImplement,
+    XhsExcelStoreImplement,
+    XhsJsonStoreImplement,
+    XhsJsonlStoreImplement,
+    XhsMongoStoreImplement,
+    XhsSqliteStoreImplement,
+)
 
 
 def normalize_image_list(image_list: List[Dict]) -> List[Dict]:
@@ -90,7 +99,7 @@ def get_video_url_arr(note_item: Dict) -> List:
         media = video_dict.get('media', {})
         stream = media.get('stream', {})
         videos = stream.get('h264')
-        if type(videos).__name__ == 'list':
+        if isinstance(videos, list):
             videoArr = [v.get('master_url') for v in videos]
     else:
         videoArr = [f"http://sns-video-bd.xhscdn.com/{originVideoKey}"]
@@ -210,7 +219,7 @@ async def save_creator(user_id: str, creator: Dict):
     follows = 0
     fans = 0
     interaction = 0
-    for i in creator.get('interactions'):
+    for i in creator.get('interactions') or []:
         if i.get('type') == 'follows':
             follows = i.get('count')
         elif i.get('type') == 'fans':
@@ -256,7 +265,7 @@ async def update_xhs_note_image(note_id, pic_content, extension_file_name):
 
     """
 
-    await XiaoHongShuImage().store_image({"notice_id": note_id, "pic_content": pic_content, "extension_file_name": extension_file_name})
+    await XiaoHongShuImage().store_image({"note_id": note_id, "pic_content": pic_content, "extension_file_name": extension_file_name})
 
 
 async def update_xhs_note_video(note_id, video_content, extension_file_name):
@@ -271,4 +280,4 @@ async def update_xhs_note_video(note_id, video_content, extension_file_name):
 
     """
 
-    await XiaoHongShuVideo().store_video({"notice_id": note_id, "video_content": video_content, "extension_file_name": extension_file_name})
+    await XiaoHongShuVideo().store_video({"note_id": note_id, "video_content": video_content, "extension_file_name": extension_file_name})
