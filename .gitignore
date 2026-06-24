@@ -187,6 +187,7 @@ database/accounts/*.db
 *.html
 !api/webui/index.html
 !docs/**/*.html
+!dashboard/static/dashboard.html
 
 # SQL queries (user-specific)
 *.sql
@@ -197,3 +198,18 @@ database/accounts/*.db
 
 # macOS
 .DS_Store
+explore/.env
+.env
+
+.codebuddy/
+.workbuddy/
+
+# Dashboard runtime state
+dashboard/database/*.db
+dashboard/database/*.db-shm
+dashboard/database/*.db-wal
+database/**/*.db-shm
+database/**/*.db-wal
+
+# Local crawl selections may contain temporary xsec_token values
+dashboard/top100_video_function_posts.json

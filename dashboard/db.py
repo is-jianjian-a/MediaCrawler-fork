@@ -35,15 +35,27 @@ def _get_account_db_path(account: str = "02") -> str:
 
 
 def get_crawler_db_path(account: str = None) -> str:
-    """Public entry point — resolve the crawler DB path."""
+    """Public entry point — resolve the crawler DB path.
+
+    Priority:
+    1. Explicit account parameter
+    2. Default base DB (sqlite_tables.db) if it exists and has data
+    3. Account 02, then 03 as fallback
+    """
     if account:
         return _get_account_db_path(account)
-    # Auto-detect: try 02 first, then 03, then whatever is latest
+
+    # Check default base DB first (contains data for default/no-account crawls)
+    base_db = os.path.join(MEDIACRAWLER_ROOT, "database", "sqlite_tables.db")
+    if os.path.exists(base_db) and os.path.getsize(base_db) > 0:
+        return base_db
+
+    # Fallback: try account DBs
     for acct in ["02", "03"]:
         path = _ACCOUNT_DB_MAP.get(acct, "")
         if path and os.path.exists(path):
             return path
-    raise FileNotFoundError("No crawler account DB found")
+    raise FileNotFoundError("No crawler DB found")
 
 
 def _connect(db_path: str) -> sqlite3.Connection:

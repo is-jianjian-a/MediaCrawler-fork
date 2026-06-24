@@ -646,6 +646,9 @@ class XiaoHongShuCrawler(AbstractCrawler):
         """Launch browser and create browser context"""
         utils.logger.info("[XiaoHongShuCrawler.launch_browser] Begin create browser context ...")
         viewport = utils.get_random_viewport()
+        launch_options = {}
+        if config.CUSTOM_BROWSER_PATH:
+            launch_options["executable_path"] = config.CUSTOM_BROWSER_PATH
         if config.SAVE_LOGIN_STATE:
             user_data_dir = os.path.join(os.getcwd(), "browser_data", config.USER_DATA_DIR % config.PLATFORM)  # type: ignore
             browser_context = await chromium.launch_persistent_context(
@@ -655,10 +658,13 @@ class XiaoHongShuCrawler(AbstractCrawler):
                 proxy=playwright_proxy,  # type: ignore
                 viewport=viewport,
                 user_agent=user_agent,
+                **launch_options,
             )
             return browser_context
         else:
-            browser = await chromium.launch(headless=headless, proxy=playwright_proxy)  # type: ignore
+            browser = await chromium.launch(
+                headless=headless, proxy=playwright_proxy, **launch_options
+            )  # type: ignore
             browser_context = await browser.new_context(viewport=viewport, user_agent=user_agent)
             return browser_context
 

@@ -8,8 +8,10 @@ Independent of crawler — survives crawler restart/exit.
 import json
 import logging
 import os
+import shutil
 import sqlite3
 import subprocess
+import sys
 import threading
 import time
 
@@ -20,9 +22,11 @@ from db import (
     get_velocity, get_latest_note, _connect, _kw_placeholders,
 )
 from groups import list_groups, save_group, activate_group, delete_group
+from task_manager import init_task_db
+from worth_scoring import score_post
 
 # --- config ---
-PORT = 18999
+PORT = 18998
 HOST = "0.0.0.0"
 MEDIACRAWLER_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOG_PATH = os.path.join(MEDIACRAWLER_ROOT, "logs", "crawler.log")
@@ -39,6 +43,7 @@ logging.basicConfig(level=logging.INFO, format="[dashboard] %(levelname)s %(mess
 logger = logging.getLogger("dashboard")
 
 app = Flask(__name__, static_folder=STATIC_DIR, static_url_path="/static")
+init_task_db()
 
 # --- Auto-detect crawler DB at startup ---
 _crawler_db_path = None
@@ -58,25 +63,43 @@ def _with_crawler_db():
 # --- process info ---
 
 def get_process_info():
-    """Detect crawler process by scanning for main.py XHS processes."""
+    """Detect crawler process by scanning for main.py processes (any platform)."""
     try:
+        # Try any main.py process first
         r = subprocess.run(
-            ["pgrep", "-f", "main.py.*platform.*xhs"],
+            ["pgrep", "-f", "main.py"],
             capture_output=True, text=True, timeout=5,
         )
         pids = [p for p in r.stdout.strip().split("\n") if p]
         if not pids:
-            return False, "", 0.0, 0
+            return False, "", 0.0, 0, "unknown"
+        # Get platform from command line
+        platform = "unknown"
+        try:
+            cmdline = subprocess.run(
+                ["ps", "-p", pids[0], "-o", "command="],
+                capture_output=True, text=True, timeout=5,
+            )
+            cmd = cmdline.stdout.strip()
+            if "--platform" in cmd:
+                for part in cmd.split():
+                    if part.startswith("--platform="):
+                        platform = part.split("=")[1]
+                    elif part == "--platform":
+                        idx = cmd.split().index(part)
+                        platform = cmd.split()[idx + 1] if idx + 1 < len(cmd.split()) else "unknown"
+        except Exception:
+            pass
         r = subprocess.run(
             ["ps", "-p", pids[0], "-o", "etime=,cpu=,rss="],
             capture_output=True, text=True, timeout=5,
         )
         parts = r.stdout.strip().split()
         if len(parts) >= 3:
-            return True, parts[0], float(parts[1]), int(parts[2]) // 1024
-        return True, "", 0.0, 0
+            return True, parts[0], float(parts[1]), int(parts[2]) // 1024, platform
+        return True, "", 0.0, 0, platform
     except Exception:
-        return False, "", 0.0, 0
+        return False, "", 0.0, 0, "unknown"
 
 
 # --- snapshot DB (dashboard's own history storage) ---
@@ -120,7 +143,7 @@ def take_snapshot():
     try:
         keywords, _ = get_config_values()
         stats = get_crawler_stats(conn, keywords)
-        alive, uptime, cpu, rss_mb = get_process_info()
+        alive, uptime, cpu, rss_mb, platform = get_process_info()
     finally:
         conn.close()
 
@@ -206,7 +229,7 @@ def api_stats():
     if conn:
         conn.close()
 
-    alive, uptime, cpu, rss_mb = get_process_info()
+    alive, uptime, cpu, rss_mb, platform = get_process_info()
     db_size = get_db_size_mb()
 
     if alive:
@@ -239,7 +262,7 @@ def api_stats():
         "ts": time.time(),
         "verdict": verdict,
         "verdict_color": vcolor,
-        "process": {"alive": alive, "uptime": uptime, "cpu": cpu, "rss_mb": rss_mb},
+        "process": {"alive": alive, "uptime": uptime, "cpu": cpu, "rss_mb": rss_mb, "platform": platform},
         "stats": stats,
         "keywords": keywords,
         "keywords_table": keywords_table,
@@ -315,18 +338,21 @@ def api_health():
                 last_write = round((time.time() * 1000 - ts) / 1000, 1)
         finally:
             conn.close()
-    alive, _, _, _ = get_process_info()
+    alive, _, _, _, platform = get_process_info()
 
     status = "ok"
     if not db_ok:
-        status = "degraded"
+        status = "db_disconnected"
     elif not alive:
-        status = "degraded"
+        status = "crawler_down"
+    elif last_write and last_write > 600:
+        status = "stalled"
 
     return jsonify({
         "status": status,
         "db_connected": db_ok,
         "crawler_alive": alive,
+        "crawler_platform": platform,
         "last_write_seconds_ago": last_write,
     })
 
@@ -371,6 +397,210 @@ def api_comment_stats():
         })
     finally:
         conn.close()
+
+
+@app.route("/api/quality")
+def api_quality():
+    """Data quality dashboard: comment coverage, high-value gaps, etc."""
+    keywords, _ = get_config_values()
+    conn = _with_crawler_db()
+    if not conn:
+        return jsonify({"error": "no DB"})
+    try:
+        cur = conn.cursor()
+        ph = _kw_placeholders(keywords)
+
+        # Posts with < 5% comment capture rate
+        cur.execute(f"""
+            SELECT n.note_id, n.title, n.comment_count as target,
+                   COUNT(c.comment_id) as actual
+            FROM xhs_note n
+            LEFT JOIN xhs_note_comment c ON c.note_id = n.note_id
+            WHERE n.source_keyword IN ({ph})
+            GROUP BY n.note_id
+            HAVING n.comment_count > 50 AND (actual * 1.0 / n.comment_count) < 0.05
+        """, keywords)
+        low_coverage = [{"note_id": r[0], "title": r[1], "target": r[2], "actual": r[3]} for r in cur.fetchall()]
+
+        # High-value posts (liked > 5000) missing comments
+        cur.execute(f"""
+            SELECT n.note_id, n.title, n.liked_count, n.comment_count
+            FROM xhs_note n
+            WHERE n.source_keyword IN ({ph}) AND n.liked_count > 5000
+              AND NOT EXISTS (SELECT 1 FROM xhs_note_comment c WHERE c.note_id = n.note_id)
+        """, keywords)
+        high_value_missing = [{"note_id": r[0], "title": r[1], "liked": r[2], "target_comments": r[3]} for r in cur.fetchall()]
+
+        return jsonify({
+            "low_coverage_posts": low_coverage,
+            "high_value_missing": high_value_missing,
+            "low_coverage_count": len(low_coverage),
+            "high_value_missing_count": len(high_value_missing),
+        })
+    finally:
+        conn.close()
+
+
+# --- task manager API ---
+
+@app.route("/api/tasks")
+def api_list_tasks():
+    from task_manager import list_tasks
+    return jsonify(list_tasks())
+
+
+@app.route("/api/tasks/<task_id>")
+def api_get_task(task_id):
+    from task_manager import get_task
+    task = get_task(task_id)
+    if not task:
+        return jsonify({"error": "not found"}), 404
+    return jsonify(task)
+
+
+@app.route("/api/tasks", methods=["POST"])
+def api_create_task():
+    from task_manager import create_task
+    data = request.get_json(force=True)
+    name = data.get("name", "")
+    posts = data.get("posts", [])
+    config = data.get("config", {})
+    if not name or not isinstance(posts, list) or not posts:
+        return jsonify({"error": "name and posts required"}), 400
+    unique_posts = []
+    seen_note_ids = set()
+    for post in posts:
+        note_id = post.get("note_id") if isinstance(post, dict) else None
+        if not note_id or note_id in seen_note_ids:
+            continue
+        seen_note_ids.add(note_id)
+        unique_posts.append(post)
+    posts = unique_posts
+    if not posts:
+        return jsonify({"error": "posts must contain note_id"}), 400
+    if len(posts) > 100:
+        return jsonify({"error": "a task may contain at most 100 posts"}), 400
+    try:
+        config = {
+            "batch_size": max(1, min(int(config.get("batch_size", 5)), 20)),
+            "max_comments": max(1, min(int(config.get("max_comments", 200)), 500)),
+            "max_sub_comments": max(0, min(int(config.get("max_sub_comments", 200)), 1000)),
+            "get_sub_comments": config.get("get_sub_comments", False) is True,
+            "delay": max(0, min(float(config.get("delay", 5)), 120)),
+        }
+    except (TypeError, ValueError):
+        return jsonify({"error": "invalid task config"}), 400
+    task_id = create_task(name, posts, config)
+    return jsonify({"id": task_id, "ok": True})
+
+
+@app.route("/api/tasks/<task_id>/start", methods=["POST"])
+def api_start_task(task_id):
+    from task_manager import claim_task, fail_task_start, get_task
+
+    claimed, error = claim_task(task_id)
+    if not claimed:
+        status = 404 if error == "task not found" else 409
+        return jsonify({"error": error}), status
+
+    task = get_task(task_id)
+    try:
+        task_config = json.loads(task.get("config_json") or "{}")
+    except (TypeError, json.JSONDecodeError):
+        task_config = {}
+
+    uv = shutil.which("uv")
+    command = ([uv, "run", "python"] if uv else [sys.executable]) + [
+        os.path.join(DASHBOARD_DIR, "comment_fetcher.py"),
+        "--task-id", task_id,
+        "--batch-size", str(task_config.get("batch_size", 5)),
+        "--max-comments", str(task_config.get("max_comments", 200)),
+        "--max-sub-comments", str(task_config.get("max_sub_comments", 200)),
+        "--delay", str(task_config.get("delay", 5)),
+    ]
+    if task_config.get("get_sub_comments"):
+        command.append("--get-sub-comments")
+
+    try:
+        worker = subprocess.Popen(
+            command,
+            cwd=MEDIACRAWLER_ROOT,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except Exception as exc:
+        fail_task_start(task_id, str(exc))
+        return jsonify({"error": f"failed to start worker: {exc}"}), 500
+    return jsonify({"ok": True, "pid": worker.pid, "status": "starting"}), 202
+
+
+@app.route("/api/tasks/<task_id>/complete", methods=["POST"])
+def api_complete_task(task_id):
+    from task_manager import complete_task
+    complete_task(task_id)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/tasks/<task_id>/posts")
+def api_get_task_posts(task_id):
+    from task_manager import get_task_posts
+    status = request.args.get("status")
+    return jsonify(get_task_posts(task_id, status))
+
+
+@app.route("/api/worth-digging")
+def api_worth_digging():
+    """Get high-value posts worth digging for comments."""
+    keywords, _ = get_config_values()
+    conn = _with_crawler_db()
+    if not conn:
+        return jsonify({"error": "no DB connection"})
+    try:
+        cur = conn.cursor()
+        ph = _kw_placeholders(keywords)
+
+        # Score the complete active-keyword set. Saved comment counts are
+        # aggregated once to avoid one query per post.
+        cur.execute(
+            f"""SELECT n.note_id, n.title, n.source_keyword, n.liked_count,
+                n.comment_count, LENGTH(n.desc) AS desc_length,
+                COUNT(c.comment_id) AS db_comment_count
+            FROM xhs_note n
+            LEFT JOIN xhs_note_comment c ON c.note_id = n.note_id
+            WHERE n.source_keyword IN ({ph})
+            GROUP BY n.note_id""",
+            keywords,
+        )
+
+        posts = []
+        for r in cur.fetchall():
+            post = {
+                "note_id": r[0],
+                "title": r[1],
+                "source_keyword": r[2],
+                "liked_count": r[3] or 0,
+                "comment_count": r[4] or 0,
+                "desc_length": r[5] or 0,
+                "db_comment_count": r[6] or 0,
+            }
+            post.update(score_post(post))
+            post.pop("desc_length")
+            posts.append(post)
+
+        posts.sort(
+            key=lambda x: (x["worth_score"], x["comment_gap"], x["liked_count"]),
+            reverse=True,
+        )
+        return jsonify({
+            "total": len(posts),
+            "high_priority": len([p for p in posts if p["worth_score"] >= 60]),
+            "posts": posts,
+        })
+    finally:
+        conn.close()
+
+
 # --- keyword groups ---
 
 @app.route("/api/groups")
@@ -422,6 +652,39 @@ def api_logs():
         })
     except Exception as e:
         return jsonify({"error": str(e), "lines": []})
+
+
+@app.route("/api/log-stats")
+def api_log_stats():
+    """Return error/warning statistics from crawler log."""
+    minutes = request.args.get("minutes", 10, type=int)
+    if not os.path.exists(LOG_PATH):
+        return jsonify({"errors": 0, "warnings": 0, "patterns": []})
+    try:
+        with open(LOG_PATH, "r", encoding="utf-8") as f:
+            content = f.read()
+        all_lines = content.split("\n")
+        # Filter lines within time window (approximate by line count)
+        window_lines = all_lines[-1000:]  # Last 1000 lines as proxy for recent
+        errors = [l for l in window_lines if "ERROR" in l or "Traceback" in l]
+        warnings = [l for l in window_lines if "WARNING" in l]
+        # Extract error patterns
+        patterns = {}
+        for line in errors:
+            if "LoginError" in line:
+                patterns["LoginError"] = patterns.get("LoginError", 0) + 1
+            elif "DataFetchError" in line:
+                patterns["DataFetchError"] = patterns.get("DataFetchError", 0) + 1
+            elif "IPBlockError" in line:
+                patterns["IPBlockError"] = patterns.get("IPBlockError", 0) + 1
+        return jsonify({
+            "errors": len(errors),
+            "warnings": len(warnings),
+            "patterns": patterns,
+            "total_lines": len(all_lines),
+        })
+    except Exception as e:
+        return jsonify({"error": str(e), "errors": 0, "warnings": 0, "patterns": []})
 
 
 # --- startup ---

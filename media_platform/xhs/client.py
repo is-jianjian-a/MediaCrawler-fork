@@ -431,7 +431,9 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
         result = []
         comments_has_more = True
         comments_cursor = ""
-        while comments_has_more:
+        scanned_count = 0
+        sub_comment_scan_counter = {"count": 0}
+        while comments_has_more and scanned_count < max_count:
             comments_res = await self.get_note_comments(
                 note_id=note_id, xsec_token=xsec_token, cursor=comments_cursor
             )
@@ -443,13 +445,18 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
                 )
                 break
             comments = comments_res["comments"]
-            if len(result) + len(comments) > max_count:
-                comments = comments[: max_count - len(result)]
+            remaining = max_count - scanned_count
+            if len(comments) > remaining:
+                comments = comments[:remaining]
+            scanned_count += len(comments)
             
             # Filter out existing comments
             new_comments = [c for c in comments if c.get("id") not in existing_comment_ids]
             if new_comments and callback:
                 await callback(note_id, new_comments)
+                existing_comment_ids.update(
+                    c.get("id") for c in new_comments if c.get("id")
+                )
             
             # Inter-page delay: 3s (human scroll + read time)
             await asyncio.sleep(3)
@@ -461,6 +468,7 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
                 crawl_interval=3,
                 callback=callback,
                 existing_comment_ids=existing_comment_ids,
+                scan_counter=sub_comment_scan_counter,
             )
             result.extend(sub_comments)
         return result
@@ -472,6 +480,7 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
         crawl_interval: float = 1.0,
         callback: Optional[Callable] = None,
         existing_comment_ids: Optional[Set[str]] = None,
+        scan_counter: Optional[Dict[str, int]] = None,
     ) -> List[Dict]:
         """
         Get all second-level comments with deduplication.
@@ -492,16 +501,27 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
 
         if existing_comment_ids is None:
             existing_comment_ids = set()
+        if scan_counter is None:
+            scan_counter = {"count": 0}
+        max_count = max(0, config.CRAWLER_MAX_SUB_COMMENTS_COUNT_SINGLENOTES)
+        if max_count == 0 or scan_counter["count"] >= max_count:
+            return []
 
         result = []
         for comment in comments:
+            if scan_counter["count"] >= max_count:
+                break
             try:
                 note_id = comment.get("note_id")
                 sub_comments = comment.get("sub_comments")
-                if sub_comments and callback:
+                if sub_comments:
+                    remaining = max_count - scan_counter["count"]
+                    sub_comments = sub_comments[:remaining]
+                    scan_counter["count"] += len(sub_comments)
                     new_subs = [s for s in sub_comments if s.get("id") not in existing_comment_ids]
                     if new_subs:
-                        await callback(note_id, new_subs)
+                        if callback:
+                            await callback(note_id, new_subs)
                         for s in new_subs:
                             existing_comment_ids.add(s.get("id"))
                     result.extend(new_subs)
@@ -513,7 +533,7 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
                 root_comment_id = comment.get("id")
                 sub_comment_cursor = comment.get("sub_comment_cursor")
 
-                while sub_comment_has_more:
+                while sub_comment_has_more and scan_counter["count"] < max_count:
                     try:
                         comments_res = await self.get_note_sub_comments(
                             note_id=note_id,
@@ -536,7 +556,9 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
                             )
                             break
                         sub_comments = comments_res["comments"]
-                        
+                        remaining = max_count - scan_counter["count"]
+                        sub_comments = sub_comments[:remaining]
+                        scan_counter["count"] += len(sub_comments)
                         new_subs = [s for s in sub_comments if s.get("id") not in existing_comment_ids]
                         if new_subs and callback:
                             await callback(note_id, new_subs)

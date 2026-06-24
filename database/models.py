@@ -292,7 +292,7 @@ class XhsNote(Base):
     add_ts = Column(BigInteger, comment='添加时间戳')
     last_modify_ts = Column(BigInteger, comment='最后修改时间戳')
     note_id = Column(String(255), unique=True, index=True, comment='笔记ID')
-    note_type = Column(Text, comment='笔记类型')
+    type = Column(Text, comment='笔记类型')
     title = Column(Text, comment='笔记标题')
     desc = Column(Text, comment='笔记描述')
     video_url = Column(Text, comment='视频URL')
