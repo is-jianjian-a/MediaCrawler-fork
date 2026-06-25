@@ -243,7 +243,7 @@ body {
 .seg button.active { background: var(--surface); color: var(--text); box-shadow: var(--shadow-xs); }
 
 /* ---------- table ---------- */
-.tbl-wrap { overflow-x: auto; }
+.tbl-wrap { overflow-x: auto; overscroll-behavior: contain; }
 table.tbl { width: 100%; border-collapse: collapse; font-size: 12px; }
 table.tbl th { text-align: left; font-size: 10px; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.05em; padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--surface-2); }
 table.tbl td { padding: 11px 14px; border-bottom: 1px solid var(--hairline); color: var(--text); vertical-align: middle; }
@@ -278,11 +278,24 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
 .worth-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 12px 16px; border-bottom: 1px solid var(--hairline); background: var(--surface-2); }
 .worth-count { font-size: 12px; color: var(--text-2); }
 .worth-count b { color: var(--text); }
+.task-composer { display: none; border-bottom: 1px solid var(--hairline); background: linear-gradient(180deg, #fff, var(--surface-2)); padding: 16px; }
+.task-composer.show { display: block; }
+.composer-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
+.composer-title { font-size: 14px; font-weight: 750; letter-spacing: -0.01em; }
+.composer-sub { margin-top: 2px; font-size: 11px; color: var(--text-3); }
+.composer-grid { display: grid; grid-template-columns: 1.4fr repeat(4, minmax(110px, 1fr)); gap: 10px; align-items: end; }
+.field label { display: block; font-size: 10px; font-weight: 700; color: var(--text-3); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 5px; }
+.field .input { width: 100%; }
+.check-field { display: flex; align-items: center; gap: 8px; height: 32px; color: var(--text-2); font-size: 12px; font-weight: 600; }
+.composer-actions { display: flex; justify-content: space-between; gap: 12px; margin-top: 14px; align-items: center; }
+.composer-note { font-size: 11px; color: var(--text-3); }
+@media(max-width:980px){ .composer-grid{ grid-template-columns: repeat(2,1fr); } .composer-grid .field:first-child{ grid-column: 1/-1; } }
 
 /* task cards */
-.task-list { padding: 6px; max-height: 380px; overflow-y: auto; }
+.task-workbench { display: grid; grid-template-columns: minmax(360px, .95fr) 1.35fr; gap: 0; min-height: 380px; }
+.task-list { padding: 6px; max-height: 520px; overflow-y: auto; overscroll-behavior: contain; border-right: 1px solid var(--hairline); }
 .task-item { padding: 13px 14px; border-radius: var(--r); cursor: pointer; transition: background .12s; border: 1px solid transparent; }
-.task-item:hover { background: var(--surface-2); border-color: var(--border); }
+.task-item:hover, .task-item.active { background: var(--surface-2); border-color: var(--border); }
 .task-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 7px; }
 .task-name { font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 8px; min-width: 0; }
 .task-name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -290,15 +303,39 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
 .task-meta { font-size: 11px; color: var(--text-3); display: flex; gap: 14px; flex-wrap: wrap; }
 .task-prog-track { height: 5px; background: var(--surface-sunken); border-radius: 999px; overflow: hidden; margin-top: 8px; }
 .task-prog-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--brand), #ff5a72); transition: width .5s; }
+.task-row-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.task-detail { padding: 16px; max-height: 520px; overflow-y: auto; overscroll-behavior: contain; background: linear-gradient(180deg, #fff, #fff 70%, var(--surface-2)); }
+.task-detail-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; margin-bottom: 14px; }
+.task-detail-title { font-size: 15px; font-weight: 750; letter-spacing: -0.01em; }
+.task-detail-sub { margin-top: 3px; color: var(--text-3); font-size: 11px; }
+.task-stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 14px; }
+.task-stat { padding: 10px 11px; border: 1px solid var(--border); background: var(--surface-2); border-radius: var(--r-sm); }
+.task-stat .v { font-size: 18px; font-weight: 750; line-height: 1.1; }
+.task-stat .k { font-size: 10px; color: var(--text-3); margin-top: 3px; }
+.task-config { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 14px; }
+.task-config .tag { font-size: 11px; color: var(--text-2); background: var(--surface-sunken); border: 1px solid var(--border); border-radius: 999px; padding: 3px 8px; }
+.task-post-list { border: 1px solid var(--border); border-radius: var(--r); overflow: hidden; }
+.task-post { display: grid; grid-template-columns: 76px 1fr 104px; gap: 10px; padding: 10px 12px; border-bottom: 1px solid var(--hairline); align-items: center; }
+.task-post:last-child { border-bottom: none; }
+.task-post-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 600; }
+.task-post-meta { font-size: 10px; color: var(--text-3); margin-top: 2px; }
+.task-post-count { font-size: 11px; color: var(--text-2); text-align: right; }
+.task-post-error { grid-column: 2 / -1; color: var(--red); font-size: 11px; }
+.task-log-box { margin-top: 14px; border: 1px solid var(--border); border-radius: var(--r); background: #111114; color: #e4e4e7; overflow: hidden; }
+.task-log-head { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; border-bottom: 1px solid rgba(255,255,255,.08); font-size: 11px; color: #a1a1aa; }
+.task-log-content { max-height: 220px; overflow-y: auto; overscroll-behavior: contain; padding: 10px 12px; font-family: 'SF Mono', ui-monospace, Menlo, monospace; font-size: 10.5px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
+@media(max-width:980px){ .task-workbench{ grid-template-columns: 1fr; } .task-list{ border-right: none; border-bottom: 1px solid var(--hairline); } .task-detail{ max-height: none; } }
 .empty { padding: 40px 20px; text-align: center; color: var(--text-3); font-size: 12px; }
 .empty .em-ico { width: 38px; height: 38px; margin: 0 auto 10px; border-radius: 50%; background: var(--surface-sunken); display: grid; place-items: center; color: var(--text-4); }
 
 /* status chips for tasks */
 .status-chip { font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 999px; }
 .status-chip.pending { background: var(--surface-sunken); color: var(--text-3); }
+.status-chip.starting { background: var(--blue-soft); color: #1d4ed8; }
 .status-chip.running { background: var(--blue-soft); color: #1d4ed8; }
 .status-chip.completed { background: var(--green-soft); color: #047857; }
 .status-chip.completed_with_errors { background: var(--amber-soft); color: #b45309; }
+.status-chip.failed { background: var(--red-soft); color: #b91c1c; }
 
 /* ---------- preview ---------- */
 .preview-grid { display: grid; grid-template-columns: 300px 1fr; gap: 18px; padding: 16px 18px; }
@@ -323,7 +360,34 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
 .sub-comment .comment-nick { color: var(--purple); }
 
 /* ---------- logs ---------- */
-.log-content { max-height: 320px; overflow-y: auto; font-family: 'SF Mono', ui-monospace, 'Menlo', monospace; font-size: 11px; padding: 12px 16px; line-height: 1.6; }
+/* ---------- activity feed ---------- */
+.activity-list { max-height: 460px; overflow-y: auto; overscroll-behavior: contain; padding: 8px 10px; }
+.act-item { display: flex; gap: 11px; padding: 11px 10px; border-radius: var(--r); position: relative; transition: background .12s; }
+.act-item + .act-item { border-top: 1px solid var(--hairline); }
+.act-item:hover { background: var(--surface-2); }
+.act-rail { width: 3px; border-radius: 999px; flex-shrink: 0; align-self: stretch; margin-top: 2px; }
+.act-rail.post { background: var(--brand); }
+.act-rail.comment { background: var(--purple); }
+.act-thumb { width: 42px; height: 42px; border-radius: var(--r-sm); object-fit: cover; background: var(--surface-sunken); flex-shrink: 0; }
+.act-thumb.placeholder { display: grid; place-items: center; color: var(--text-4); }
+.act-body { min-width: 0; flex: 1; }
+.act-line1 { display: flex; align-items: center; gap: 7px; font-size: 11px; color: var(--text-3); margin-bottom: 3px; flex-wrap: wrap; }
+.act-type { font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 999px; text-transform: uppercase; letter-spacing: 0.03em; }
+.act-type.post { background: var(--brand-soft); color: var(--brand); }
+.act-type.comment { background: var(--purple-soft); color: var(--purple); }
+.act-kw { color: var(--text-2); }
+.act-time { margin-left: auto; white-space: nowrap; }
+.act-title { font-size: 13px; font-weight: 600; line-height: 1.4; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.act-text { font-size: 12.5px; color: var(--text); line-height: 1.55; margin: 2px 0 4px; }
+.act-nick { color: var(--blue); font-weight: 600; font-size: 11px; }
+.act-nick .ip { color: var(--text-3); font-weight: 400; margin-left: 5px; }
+.act-meta { display: flex; gap: 12px; font-size: 11px; color: var(--text-3); margin-top: 4px; }
+.act-meta a { color: var(--brand); text-decoration: none; font-weight: 600; }
+.act-meta a:hover { text-decoration: underline; }
+.act-empty { padding: 36px 20px; text-align: center; color: var(--text-3); font-size: 12px; }
+.act-empty .em-ico { width: 38px; height: 38px; margin: 0 auto 10px; border-radius: 50%; background: var(--surface-sunken); display: grid; place-items: center; color: var(--text-4); }
+
+.log-content { max-height: 320px; overflow-y: auto; overscroll-behavior: contain; font-family: 'SF Mono', ui-monospace, 'Menlo', monospace; font-size: 11px; padding: 12px 16px; line-height: 1.6; }
 .log-line { padding: 1px 0; color: var(--text-2); white-space: pre-wrap; word-break: break-all; }
 .log-line .lvl-INFO { color: var(--text); }
 .log-line .lvl-WARNING { color: #b45309; }
@@ -489,26 +553,24 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
   </div>
 
   <div class="section">
+    <div class="section-head">
+      <div class="section-title">采集速率</div>
+      <div class="section-sub">每分钟新增量 · 各自独立坐标轴 · 最近 90 分钟 · 一图只看一件事</div>
+    </div>
     <div class="chart-grid">
-      <div>
-        <div class="section-head"><div class="section-title">每小时速度</div></div>
-        <div class="card chart-box">
-          <div class="chart-legend">
-            <span class="lg"><span class="sw" style="background:var(--c-blue)"></span>帖/时</span>
-            <span class="lg"><span class="sw" style="background:var(--c-comments)"></span>评/时</span>
-          </div>
-          <canvas id="chartHour"></canvas>
+      <div class="card chart-box">
+        <div class="chart-legend">
+          <span class="lg"><span class="sw" style="background:var(--c-posts)"></span>新增帖子 / 分钟</span>
+          <span class="lg" style="color:var(--text-3)" id="postRatePeak">峰值 --</span>
         </div>
+        <canvas id="chartPostRate"></canvas>
       </div>
-      <div>
-        <div class="section-head"><div class="section-title">每分钟速度</div></div>
-        <div class="card chart-box">
-          <div class="chart-legend">
-            <span class="lg"><span class="sw" style="background:var(--c-blue)"></span>帖/min</span>
-            <span class="lg"><span class="sw" style="background:var(--c-comments)"></span>评/min</span>
-          </div>
-          <canvas id="chartSpeed"></canvas>
+      <div class="card chart-box">
+        <div class="chart-legend">
+          <span class="lg"><span class="sw" style="background:var(--c-comments)"></span>新增评论 / 分钟</span>
+          <span class="lg" style="color:var(--text-3)" id="commentRatePeak">峰值 --</span>
         </div>
+        <canvas id="chartCommentRate"></canvas>
       </div>
     </div>
   </div>
@@ -559,6 +621,48 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
             <button class="btn btn-sm btn-primary" onclick="createTaskFromSelected()">从选中创建任务</button>
           </div>
         </div>
+        <div class="task-composer" id="taskComposer">
+          <div class="composer-head">
+            <div>
+              <div class="composer-title">创建补抓任务</div>
+              <div class="composer-sub" id="composerSub">选择帖子后配置任务。创建后不会自动启动，需要到任务管理手动启动。</div>
+            </div>
+            <button class="btn btn-sm btn-ghost" onclick="closeTaskComposer()">收起</button>
+          </div>
+          <div class="composer-grid">
+            <div class="field">
+              <label>任务名称</label>
+              <input class="input" id="taskNameInput" type="text" maxlength="80">
+            </div>
+            <div class="field">
+              <label>一级评论上限</label>
+              <input class="input" id="taskMaxComments" type="number" min="1" max="500" value="200">
+            </div>
+            <div class="field">
+              <label>Batch size（每次打开处理帖子数）</label>
+              <input class="input" id="taskBatchSize" type="number" min="5" max="20" value="5">
+            </div>
+            <div class="field">
+              <label>间隔秒数</label>
+              <input class="input" id="taskDelay" type="number" min="0" max="120" value="5" step="0.5">
+            </div>
+            <label class="check-field">
+              <input type="checkbox" id="taskGetSubComments" onchange="toggleSubCommentConfig()">
+              抓二级评论
+            </label>
+            <div class="field" id="taskSubCommentField" style="display:none">
+              <label>二级评论上限</label>
+              <input class="input" id="taskMaxSubComments" type="number" min="1" max="1000" value="200">
+            </div>
+          </div>
+          <div class="composer-actions">
+            <span class="composer-note">流程：创建 pending 任务 → 到任务管理人工确认 → 手动启动。</span>
+            <div style="display:flex;gap:8px">
+              <button class="btn btn-ghost" onclick="closeTaskComposer()">取消</button>
+              <button class="btn btn-primary" onclick="submitTaskFromComposer()">创建任务</button>
+            </div>
+          </div>
+        </div>
         <div class="tbl-wrap" style="max-height:400px;overflow-y:auto">
           <table class="tbl" id="worthTable">
             <thead><tr>
@@ -585,28 +689,40 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
             刷新任务列表
           </button>
           <span class="worth-count" id="taskStatus">尚未加载</span>
+          <span class="worth-count" id="cdpStatus">CDP 未检查</span>
+          <button class="btn btn-sm" onclick="loadCdpStatus()">检查 CDP</button>
+          <button class="btn btn-sm btn-primary" onclick="startCdpChrome()">启动 CDP Chrome</button>
+          <div class="seg" style="margin-left:auto">
+            <button id="taskActiveSeg" class="active" onclick="switchTaskArchiveView(false)">进行中</button>
+            <button id="taskArchivedSeg" onclick="switchTaskArchiveView(true)">已归档</button>
+          </div>
         </div>
-        <div class="task-list" id="taskList">
-          <div class="empty"><div class="em-ico"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></div>点击「刷新任务列表」查看</div>
+        <div class="task-workbench">
+          <div class="task-list" id="taskList">
+            <div class="empty"><div class="em-ico"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></div>点击「刷新任务列表」查看</div>
+          </div>
+          <div class="task-detail" id="taskDetail">
+            <div class="empty"><div class="em-ico"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></svg></div>选择左侧任务查看配置和帖子明细</div>
+          </div>
         </div>
       </div>
     </div>
   </div>
 
-  <!-- ============ PREVIEW + LOGS ============ -->
+  <!-- ============ ACTIVITY FEED + LOGS ============ -->
   <div class="section">
     <div class="chart-grid">
-      <!-- preview -->
-      <div class="card" id="previewPanel">
-        <div class="collapsible-head open" onclick="togglePreview()">
+      <!-- activity feed -->
+      <div class="card" id="activityPanel">
+        <div class="collapsible-head open" onclick="toggleActivity()">
           <div class="section-title" style="font-size:13px">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/></svg>
-            最新入库帖子 <span class="tag" id="previewMeta" style="margin-left:4px">--</span>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+            最新动态 <span class="tag" id="activityMeta" style="margin-left:4px">--</span>
           </div>
           <svg class="chev open" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m9 18 6-6-6-6"/></svg>
         </div>
-        <div class="collapsible-body" id="previewBody">
-          <div class="preview-grid" id="previewContent"><div class="empty" style="grid-column:1/-1">加载中…</div></div>
+        <div class="collapsible-body" id="activityBody">
+          <div class="activity-list" id="activityList">加载中…</div>
         </div>
       </div>
       <!-- logs -->
@@ -636,8 +752,9 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
 /* ============================================================
    State & helpers
    ============================================================ */
-let trendChart=null, speedChart=null, hourChart=null, autoRefresh=true;
+let trendChart=null, postRateChart=null, commentRateChart=null, autoRefresh=true;
 let _worthPosts=[], _groups=[], _activeGroup='', _historyMinutes=180;
+let _taskDraftPosts=[], _selectedTaskId='', _showArchivedTasks=false;
 
 const C = {
   posts:'#ff2442', comments:'#8b5cf6', blue:'#3b82f6', cyan:'#06b6d4',
@@ -670,6 +787,27 @@ function setVerdict(color, text){
   const pill=document.getElementById('verdictPill');
   pill.className='verdict-pill '+color;
   document.getElementById('verdictText').textContent=text;
+}
+function containWheelScroll(el){
+  if(!el||el.dataset.scrollContained==='1') return;
+  el.dataset.scrollContained='1';
+  el.addEventListener('wheel', (ev)=>{
+    const canScrollY=el.scrollHeight>el.clientHeight;
+    const canScrollX=el.scrollWidth>el.clientWidth;
+    if(!canScrollY&&!canScrollX) return;
+    const atTop=el.scrollTop<=0;
+    const atBottom=Math.ceil(el.scrollTop+el.clientHeight)>=el.scrollHeight;
+    const atLeft=el.scrollLeft<=0;
+    const atRight=Math.ceil(el.scrollLeft+el.clientWidth)>=el.scrollWidth;
+    const blockedY=canScrollY&&((ev.deltaY<0&&atTop)||(ev.deltaY>0&&atBottom));
+    const blockedX=canScrollX&&((ev.deltaX<0&&atLeft)||(ev.deltaX>0&&atRight));
+    if(blockedY||blockedX){
+      ev.preventDefault();
+    }
+  }, {passive:false});
+}
+function containAllScrollAreas(root=document){
+  root.querySelectorAll('.tbl-wrap,.task-list,.task-detail,.task-log-content,.activity-list,.log-content').forEach(containWheelScroll);
 }
 
 /* chart option factory — keeps theme consistent */
@@ -763,50 +901,49 @@ function renderKeywordTable(rows, maxNotes){
    ============================================================ */
 async function updateVelocity(){
   const v=await fetchJSON('/api/velocity');
-  const min=v.minute, hr=v.hour;
+  const min=v.minute;
   document.getElementById('liveSpeed').textContent = min.speed.posts+'帖 '+min.speed.comments+'评';
-  document.getElementById('kpiSpeed').innerHTML = min.speed.posts+'<span style="font-size:15px;color:var(--text-3);font-weight:600"> · </span>'+min.speed.comments;
+  document.getElementById('kpiSpeed').innerHTML = min.speed.posts+'<span style="font-size:15px;color:var(--text-3);font-weight:600">帖</span> · '+min.speed.comments+'<span style="font-size:15px;color:var(--text-3);font-weight:600">评</span>';
 
-  // minute bar
-  const mdata=min.data||[];
-  const mlabels=mdata.map(d=>fmtTime(d.ts));
+  // 最近 90 分钟的分钟级数据 —— 帖子与评论拆成两张独立图，各自独立坐标轴。
+  // 量级差异（评论常是帖子的几十倍）不再互相压制，各自的采集节奏都看得清。
+  const mdata=(min.data||[]).slice(-90);
+  const labels=mdata.map(d=>fmtTime(d.ts));
   const mposts=mdata.map(d=>d.posts);
   const mcomments=mdata.map(d=>d.comments);
-  if(!speedChart){
-    speedChart=new Chart(document.getElementById('chartSpeed'),{
+  const peakPosts=mposts.length?Math.max(...mposts):0;
+  const peakCmts=mcomments.length?Math.max(...mcomments):0;
+  document.getElementById('postRatePeak').textContent='峰值 '+peakPosts;
+  document.getElementById('commentRatePeak').textContent='峰值 '+peakCmts;
+
+  // 帖子速率（单指标 · 独立 Y 轴）
+  if(!postRateChart){
+    postRateChart=new Chart(document.getElementById('chartPostRate'),{
       type:'bar',
-      data:{labels:mlabels,datasets:[
-        {label:'帖/min',data:mposts,backgroundColor:C.blue,borderRadius:3,maxBarThickness:14},
-        {label:'评/min',data:mcomments,backgroundColor:C.comments,borderRadius:3,maxBarThickness:14}
+      data:{labels,datasets:[
+        {label:'新增帖子/分钟',data:mposts,backgroundColor:C.posts,borderRadius:3,maxBarThickness:16}
       ]},
-      options:chartOpts()
+      options:chartOpts({plugins:{legend:{display:false},tooltip:{backgroundColor:'#18181b',padding:10,cornerRadius:8,callbacks:{label:c=>c.parsed.y+' 帖/分钟'}}}})
     });
   }else{
-    speedChart.data.labels=mlabels;
-    speedChart.data.datasets[0].data=mposts;
-    speedChart.data.datasets[1].data=mcomments;
-    speedChart.update('none');
+    postRateChart.data.labels=labels;
+    postRateChart.data.datasets[0].data=mposts;
+    postRateChart.update('none');
   }
 
-  // hour bar
-  const hdata=hr.data||[];
-  const hlabels=hdata.map(d=>fmtDateHour(d.ts));
-  const hposts=hdata.map(d=>d.posts);
-  const hcomments=hdata.map(d=>d.comments);
-  if(!hourChart){
-    hourChart=new Chart(document.getElementById('chartHour'),{
+  // 评论速率（单指标 · 独立 Y 轴）
+  if(!commentRateChart){
+    commentRateChart=new Chart(document.getElementById('chartCommentRate'),{
       type:'bar',
-      data:{labels:hlabels,datasets:[
-        {label:'帖/时',data:hposts,backgroundColor:C.blue,borderRadius:3,maxBarThickness:18},
-        {label:'评/时',data:hcomments,backgroundColor:C.comments,borderRadius:3,maxBarThickness:18}
+      data:{labels,datasets:[
+        {label:'新增评论/分钟',data:mcomments,backgroundColor:C.comments,borderRadius:3,maxBarThickness:16}
       ]},
-      options:chartOpts()
+      options:chartOpts({plugins:{legend:{display:false},tooltip:{backgroundColor:'#18181b',padding:10,cornerRadius:8,callbacks:{label:c=>c.parsed.y+' 评/分钟'}}}})
     });
   }else{
-    hourChart.data.labels=hlabels;
-    hourChart.data.datasets[0].data=hposts;
-    hourChart.data.datasets[1].data=hcomments;
-    hourChart.update('none');
+    commentRateChart.data.labels=labels;
+    commentRateChart.data.datasets[0].data=mcomments;
+    commentRateChart.update('none');
   }
 }
 
@@ -849,54 +986,72 @@ async function updateHistory(minutes){
 }
 
 /* ============================================================
-   Latest note preview
+   Activity feed — posts + comments interleaved by add_ts.
+   Mode-aware: shows whatever the crawler just produced. When it's
+   supplementing comments (no new notes), the feed still refreshes
+   because new comment rows bubble to the top.
    ============================================================ */
-async function updatePreview(){
-  const n=await fetchJSON('/api/latest');
-  const el=document.getElementById('previewContent');
-  if(n.error){ el.innerHTML='<div class="empty" style="grid-column:1/-1"><div class="em-ico"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg></div>暂无帖子数据</div>'; document.getElementById('previewMeta').textContent='无数据'; return; }
-  document.getElementById('previewMeta').textContent = n.title?n.title.substring(0,32):(n.source_keyword||'');
-  const imgs=n.image_list||[];
-  const imgHtml=imgs.length?imgs.slice(0,3).map(u=>`<img src="${escapeHtml(u)}" loading="lazy" onerror="this.style.display='none'">`).join(''):'<div style="grid-column:1/-1;color:var(--text-3);font-size:11px;display:grid;place-items:center;aspect-ratio:1">无图</div>';
+async function updateActivity(){
+  const data=await fetchJSON('/api/activity?limit=14');
+  const el=document.getElementById('activityList');
+  const items=data.items||[];
+  if(!items.length){
+    document.getElementById('activityMeta').textContent='无数据';
+    el.innerHTML='<div class="act-empty"><div class="em-ico"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg></div>暂无任何活动</div>';
+    return;
+  }
+  // 统计本批构成，让 meta 一眼看出"现在主要在抓什么"
+  const np=items.filter(i=>i.type==='post').length;
+  const nc=items.length-np;
+  document.getElementById('activityMeta').textContent = (np?'新帖 '+np:'')+(np&&nc?' · ':'')+(nc?'新评 '+nc:'');
 
-  let commentsHtml='';
-  (n.comments||[]).forEach(c=>{
-    commentsHtml+=`<div class="comment-item">
-      <div class="comment-nick">${escapeHtml(c.nickname)}<span class="ip">${escapeHtml(c.ip_location||'')}</span></div>
-      <div class="comment-text">${escapeHtml(c.content)}</div>
-      <div class="comment-meta">👍 ${escapeHtml(String(c.like_count||0))} · ${escapeHtml(c.time||'')}</div>`;
-    (c.sub_comments||[]).forEach(s=>{
-      commentsHtml+=`<div class="sub-comment">
-        <div class="comment-nick">${escapeHtml(s.nickname)} 回复</div>
-        <div class="comment-text">${escapeHtml(s.content)}</div>
-        <div class="comment-meta">👍 ${escapeHtml(String(s.like_count||0))}</div></div>`;
-    });
-    commentsHtml+='</div>';
-  });
-
-  el.innerHTML=`
-    <div class="preview-left">
-      <div class="thumb-grid">${imgHtml}</div>
-      <a class="note-link" href="${escapeHtml(n.note_url||'#')}" target="_blank" rel="noopener">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6"/><path d="M10 14 21 3"/></svg>
-        打开原帖
-      </a>
-      <div class="note-kw">${escapeHtml(n.source_keyword||'')} · ${escapeHtml(n.crawl_time||'')}</div>
-    </div>
-    <div class="preview-right">
-      <div class="note-title">${escapeHtml(n.title||'(无标题)')}</div>
-      <div class="note-meta">
-        <span class="m">👍 ${escapeHtml(String(n.liked_count||0))}</span>
-        <span class="m">⭐ ${escapeHtml(String(n.collected_count||0))}</span>
-        <span class="m">💬 ${escapeHtml(String(n.comment_count||0))}</span>
-      </div>
-      <div class="note-desc">${escapeHtml(n.desc)||'<span style="color:var(--text-3)">（无描述）</span>'}</div>
-      ${commentsHtml||'<div style="color:var(--text-3);font-size:12px;padding:6px 0">暂无评论</div>'}
-    </div>`;
+  el.innerHTML=items.map(it=>{
+    if(it.type==='post'){
+      const thumb = it.image
+        ? `<img class="act-thumb" src="${escapeHtml(it.image)}" loading="lazy" onerror="this.outerHTML='<div class=&quot;act-thumb placeholder&quot;><svg width=&quot;18&quot; height=&quot;18&quot; viewBox=&quot;0 0 24 24&quot; fill=&quot;none&quot; stroke=&quot;currentColor&quot; stroke-width=&quot;2&quot;><rect x=&quot;3&quot; y=&quot;3&quot; width=&quot;18&quot; height=&quot;18&quot; rx=&quot;2&quot;/><circle cx=&quot;9&quot; cy=&quot;9&quot; r=&quot;2&quot;/><path d=&quot;m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21&quot;/></svg></div>'">`
+        : `<div class="act-thumb placeholder"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/></svg></div>`;
+      return `<div class="act-item">
+        <div class="act-rail post"></div>
+        ${thumb}
+        <div class="act-body">
+          <div class="act-line1">
+            <span class="act-type post">新帖</span>
+            <span class="act-kw">${escapeHtml(it.source_keyword||'')}</span>
+            <span class="act-time">${fmtGap(it.ts)}</span>
+          </div>
+          <div class="act-title">${escapeHtml(it.title)}</div>
+          <div class="act-meta">
+            <span>👍 ${escapeHtml(String(it.liked_count||0))}</span>
+            <span>💬 ${escapeHtml(String(it.comment_count||0))}</span>
+            ${it.note_url?`<a href="${escapeHtml(it.note_url)}" target="_blank" rel="noopener">打开原帖</a>`:''}
+          </div>
+        </div>
+      </div>`;
+    }else{
+      const c=(it.content||'').length>120?(it.content.slice(0,120)+'…'):(it.content||'');
+      return `<div class="act-item">
+        <div class="act-rail comment"></div>
+        <div class="act-thumb placeholder" style="background:var(--purple-soft);color:var(--purple)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg></div>
+        <div class="act-body">
+          <div class="act-line1">
+            <span class="act-type comment">新评论</span>
+            <span class="act-nick">${escapeHtml(it.nickname)}<span class="ip">${escapeHtml(it.ip_location||'')}</span></span>
+            <span class="act-time">${fmtGap(it.ts)}</span>
+          </div>
+          <div class="act-text">${escapeHtml(c)}</div>
+          <div class="act-meta">
+            <span>来自《${escapeHtml((it.note_title||'').length>24?(it.note_title.slice(0,24)+'…'):it.note_title)}》</span>
+            <span>👍 ${escapeHtml(String(it.like_count||0))}</span>
+          </div>
+        </div>
+      </div>`;
+    }
+  }).join('');
+  containAllScrollAreas(document.getElementById('activityPanel'));
 }
 
-function togglePreview(){
-  const b=document.getElementById('previewBody'), head=document.querySelector('#previewPanel .collapsible-head'), ch=document.querySelector('#previewPanel .chev');
+function toggleActivity(){
+  const b=document.getElementById('activityBody'), head=document.querySelector('#activityPanel .collapsible-head'), ch=document.querySelector('#activityPanel .chev');
   b.classList.toggle('collapsed');
   head.classList.toggle('open', !b.classList.contains('collapsed'));
   ch.classList.toggle('open', !b.classList.contains('collapsed'));
@@ -915,6 +1070,7 @@ async function updateLogs(){
       return '<div class="log-line"><span class="'+cls+'">'+escapeHtml(l)+'</span></div>';
     }).join('');
   }else el.innerHTML='<div class="log-line" style="color:var(--text-3)">暂无日志</div>';
+  containAllScrollAreas(document.getElementById('logPanel'));
 }
 function toggleLog(){
   const b=document.getElementById('logBody'), head=document.querySelector('#logPanel .collapsible-head'), ch=document.querySelector('#logPanel .chev');
@@ -940,7 +1096,7 @@ async function updateCommentStats(){
    ============================================================ */
 async function refreshAll(){
   try{
-    await Promise.all([updateStats(),updateVelocity(),updateHistory(),updatePreview(),updateLogs(),updateCommentStats()]);
+    await Promise.all([updateStats(),updateVelocity(),updateHistory(),updateActivity(),updateLogs(),updateCommentStats()]);
   }catch(e){ /* errors handled per-call */ }
 }
 function manualRefresh(){
@@ -998,30 +1154,58 @@ function selectAllWorth(){ document.querySelectorAll('.worth-check').forEach(c=>
 function deselectAllWorth(){ document.querySelectorAll('.worth-check').forEach(c=>c.checked=false); updateWorthCount(); }
 
 async function createTaskFromSelected(){
-  const selected=[];
-  document.querySelectorAll('.worth-check:checked').forEach(c=>selected.push(_worthPosts[parseInt(c.dataset.idx)]));
-  if(!selected.length){ alert('请先勾选要补抓的帖子'); return; }
-  const name=prompt('任务名称：','video-comment-'+new Date().toISOString().slice(0,10));
-  if(!name) return;
-  const maxComments=parseInt(prompt('每篇最多扫描多少条一级评论？','200'),10);
-  if(!Number.isInteger(maxComments)||maxComments<1||maxComments>500){ alert('一级评论上限必须为 1–500'); return; }
-  const getSubComments=confirm('是否抓取二级评论？\n\n二级评论可能显著增加任务耗时和数据量，默认建议关闭。');
-  let maxSubComments=0;
-  if(getSubComments){
-    maxSubComments=parseInt(prompt('每篇最多扫描多少条二级评论？','200'),10);
-    if(!Number.isInteger(maxSubComments)||maxSubComments<1||maxSubComments>1000){ alert('二级评论上限必须为 1–1000'); return; }
+  _taskDraftPosts=[];
+  document.querySelectorAll('.worth-check:checked').forEach(c=>_taskDraftPosts.push(_worthPosts[parseInt(c.dataset.idx)]));
+  if(!_taskDraftPosts.length){ alert('请先勾选要补抓的帖子'); return; }
+  if(_taskDraftPosts.length>100){ alert('单个任务最多 100 帖，请减少选择数量'); return; }
+  const today=new Date().toISOString().slice(0,10);
+  document.getElementById('taskNameInput').value='video-comment-'+today;
+  document.getElementById('composerSub').textContent='已选 '+_taskDraftPosts.length+' 帖。创建后不会自动启动，需要到任务管理手动启动。';
+  document.getElementById('taskComposer').classList.add('show');
+  document.getElementById('taskNameInput').focus();
+}
+function closeTaskComposer(){
+  document.getElementById('taskComposer').classList.remove('show');
+}
+function toggleSubCommentConfig(){
+  const on=document.getElementById('taskGetSubComments').checked;
+  document.getElementById('taskSubCommentField').style.display=on?'block':'none';
+}
+function readBoundedNumber(id, label, min, max, allowFloat){
+  const raw=document.getElementById(id).value;
+  const n=allowFloat?parseFloat(raw):parseInt(raw,10);
+  if(!Number.isFinite(n)||n<min||n>max){
+    throw new Error(label+'必须为 '+min+'–'+max);
   }
-  const config={batch_size:5,max_comments:maxComments,max_sub_comments:maxSubComments,get_sub_comments:getSubComments,delay:5};
-  if(!confirm('即将创建并启动任务：'+name+'\n帖子数：'+selected.length+'\n一级评论上限：'+maxComments+' / 篇\n二级评论：'+(getSubComments?('开启，最多 '+maxSubComments+' / 篇'):'关闭')+'\n\n确认执行？')) return;
+  return n;
+}
+async function submitTaskFromComposer(){
+  if(!_taskDraftPosts.length){ alert('请先勾选要补抓的帖子'); return; }
+  const name=document.getElementById('taskNameInput').value.trim();
+  if(!name){ alert('请输入任务名称'); return; }
+  let config;
   try{
+    const getSubComments=document.getElementById('taskGetSubComments').checked;
+    config={
+      batch_size:readBoundedNumber('taskBatchSize','Batch size',5,20,false),
+      max_comments:readBoundedNumber('taskMaxComments','一级评论上限',1,500,false),
+      max_sub_comments:getSubComments?readBoundedNumber('taskMaxSubComments','二级评论上限',1,1000,false):0,
+      get_sub_comments:getSubComments,
+      delay:readBoundedNumber('taskDelay','间隔秒数',0,120,true)
+    };
+  }catch(e){
+    alert(e.message);
+    return;
+  }
+  try{
+    const selected=_taskDraftPosts;
     const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,posts:selected,config})});
     const data=await r.json();
     if(!data.ok){ alert('创建失败：'+(data.error||'未知错误')); return; }
-    const sr=await fetch('/api/tasks/'+data.id+'/start',{method:'POST'});
-    const started=await sr.json();
-    if(!sr.ok){ alert('任务已创建但启动失败：'+(started.error||'未知错误')+'\nID：'+data.id); }
-    else{ alert('✓ 任务已启动\nID：'+data.id); }
-    switchTab('task'); loadTasks();
+    _selectedTaskId=data.id;
+    closeTaskComposer();
+    switchTab('task');
+    alert('任务已创建，状态为待处理。\nID：'+data.id+'\n请在任务管理里确认后手动启动。');
   }catch(e){ alert('请求失败：'+e.message); }
 }
 
@@ -1030,41 +1214,276 @@ async function createTaskFromSelected(){
    ============================================================ */
 async function loadTasks(){
   document.getElementById('taskStatus').innerHTML='<span class="spin-load"></span> 加载中…';
-  const tasks=await fetchJSON('/api/tasks');
+  loadCdpStatus();
+  const tasks=await fetchJSON('/api/tasks'+(_showArchivedTasks?'?archived=1':''));
   document.getElementById('taskBadge').textContent=tasks.length||0;
   const el=document.getElementById('taskList');
   if(!tasks.length){
-    el.innerHTML='<div class="empty"><div class="em-ico"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></div>暂无任务<br><span style="font-size:11px">从「值得深挖」选择帖子后创建</span></div>';
-    document.getElementById('taskStatus').textContent='无任务';
+    const emptyText=_showArchivedTasks?'暂无归档任务':'暂无任务<br><span style="font-size:11px">从「值得深挖」选择帖子后创建</span>';
+    el.innerHTML='<div class="empty"><div class="em-ico"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></div>'+emptyText+'</div>';
+    document.getElementById('taskDetail').innerHTML='<div class="empty"><div class="em-ico"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></svg></div>'+(_showArchivedTasks?'已归档任务会显示在这里。':'暂无任务。先从「值得深挖」选择帖子创建任务。')+'</div>';
+    document.getElementById('taskStatus').textContent=_showArchivedTasks?'无归档任务':'无任务';
     return;
   }
   el.innerHTML=tasks.map(t=>{
-    const progress=t.total_posts>0?Math.round(t.completed_posts/t.total_posts*100):0;
+    const done=(t.completed_posts||0)+(t.failed_posts||0);
+    const progress=t.total_posts>0?Math.round(done/t.total_posts*100):0;
     const created=new Date(t.created_at*1000).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
-    return `<div class="task-item" onclick="showTaskDetail('${t.id}')">
+    const postStatus=t.post_status||{};
+    const pending=postStatus.pending||0;
+    const active=_selectedTaskId===t.id?' active':'';
+    return `<div class="task-item${active}" onclick="showTaskDetail('${t.id}')">
       <div class="task-top">
         <div class="task-name"><span>${escapeHtml(t.name)}</span></div>
-        <span class="status-chip ${t.status}">${statusLabel(t.status)}</span>
+        <div class="task-row-actions">
+          <span class="status-chip ${t.status}">${statusLabel(t.status)}</span>
+          ${taskActionButtons(t, true)}
+        </div>
       </div>
       <div class="task-meta">
         <span class="mono task-id">${t.id}</span>
-        <span>进度 ${t.completed_posts}/${t.total_posts} (${progress}%)</span>
+        <span>完成 ${t.completed_posts||0}/${t.total_posts} · 待处理 ${pending}</span>
         <span>失败 ${t.failed_posts||0}</span>
         <span>新增评论 ${t.total_comments_added||0}</span>
         <span>${created}</span>
+        ${t.archived_at?`<span>归档 ${new Date(t.archived_at*1000).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})}</span>`:''}
       </div>
       <div class="task-prog-track"><div class="task-prog-fill" style="width:${progress}%"></div></div>
     </div>`;
   }).join('');
-  document.getElementById('taskStatus').textContent='共 '+tasks.length+' 个任务';
+  document.getElementById('taskStatus').textContent=(_showArchivedTasks?'已归档 ':'未归档 ')+'共 '+tasks.length+' 个任务';
+  if(_selectedTaskId) showTaskDetail(_selectedTaskId, true);
+  containAllScrollAreas(document.getElementById('panelTask'));
+}
+async function loadCdpStatus(){
+  const el=document.getElementById('cdpStatus');
+  if(!el) return;
+  try{
+    const s=await fetchJSON('/api/cdp/status');
+    if(s.ok){
+      el.innerHTML='<span style="color:var(--green);font-weight:600">CDP 已连接</span> · '+escapeHtml(s.browser||('port '+s.port));
+    }else{
+      el.innerHTML='<span style="color:var(--red);font-weight:600">CDP 未启用</span> · 端口 '+escapeHtml(String(s.port||9222));
+      el.title=s.hint||s.error||'请开启 Chrome remote debugging';
+    }
+  }catch(e){
+    el.innerHTML='<span style="color:var(--red);font-weight:600">CDP 检查失败</span>';
+  }
+}
+async function startCdpChrome(){
+  const el=document.getElementById('cdpStatus');
+  if(el) el.innerHTML='<span class="spin-load"></span> 正在启动 CDP Chrome…';
+  try{
+    const r=await fetch('/api/cdp/start',{method:'POST'});
+    const data=await r.json();
+    if(!r.ok||!data.ok){
+      alert('启动 CDP Chrome 失败：'+(data.error||'未知错误'));
+      await loadCdpStatus();
+      return;
+    }
+    if(el){
+      el.innerHTML='<span style="color:var(--green);font-weight:600">CDP 已连接</span> · '+escapeHtml(data.browser||('port '+data.port));
+      el.title=(data.started?'已启动新 Chrome：':'已连接现有 Chrome：')+(data.user_data_dir||'');
+    }
+  }catch(e){
+    alert('启动 CDP Chrome 请求失败：'+e.message);
+    await loadCdpStatus();
+  }
 }
 function statusLabel(s){
   return {pending:'待处理',starting:'启动中',running:'运行中',completed:'已完成',completed_with_errors:'完成(有错误)'}[s]||s;
 }
-async function showTaskDetail(taskId){
+function parseTaskConfig(task){
+  if(!task) return {};
+  if(typeof task.config_json==='string'){
+    try{ return JSON.parse(task.config_json||'{}'); }catch(e){ return {}; }
+  }
+  return task.config_json||{};
+}
+function renderTaskConfig(config){
+  return [
+    'Batch '+(config.batch_size??'--'),
+    '一级最多 '+(config.max_comments??'--')+' / 篇',
+    config.get_sub_comments?('抓二级 · 最多 '+(config.max_sub_comments??'--')+' / 篇'):'不抓二级',
+    '间隔 '+(config.delay??'--')+' 秒'
+  ].map(x=>`<span class="tag">${escapeHtml(x)}</span>`).join('');
+}
+function taskActionButtons(task, compact){
+  const id=task.id;
+  const buttons=[];
+  if(task.archived_at){
+    return `<button class="btn btn-sm" onclick="unarchiveTask('${id}',event)">取消归档</button>`;
+  }
+  if(task.status==='pending'){
+    buttons.push(`<button class="btn btn-sm btn-primary" onclick="startTask('${id}',event)">启动</button>`);
+  }
+  if(task.status==='completed_with_errors' && (task.failed_posts||0)>0){
+    buttons.push(`<button class="btn btn-sm btn-primary" onclick="retryFailedTask('${id}',event)">重试失败项</button>`);
+    if(!compact) buttons.push(`<button class="btn btn-sm" onclick="resetFailedTask('${id}',event)">重置失败项</button>`);
+  }
+  if(task.status==='starting'||task.status==='running'){
+    buttons.push(`<button class="btn btn-sm btn-danger" onclick="cancelTask('${id}',event)">终止</button>`);
+  }
+  if(task.status!=='starting'&&task.status!=='running'){
+    buttons.push(`<button class="btn btn-sm" onclick="archiveTask('${id}',event)">归档</button>`);
+  }
+  return buttons.join('');
+}
+function switchTaskArchiveView(showArchived){
+  _showArchivedTasks=showArchived;
+  _selectedTaskId='';
+  document.getElementById('taskActiveSeg').classList.toggle('active', !showArchived);
+  document.getElementById('taskArchivedSeg').classList.toggle('active', showArchived);
+  loadTasks();
+}
+async function startTask(taskId, ev){
+  if(ev) ev.stopPropagation();
+  const ok=confirm('确认启动任务 '+taskId+'？\n启动后会在后台运行 comment_fetcher。');
+  if(!ok) return;
+  try{
+    const r=await fetch('/api/tasks/'+taskId+'/start',{method:'POST'});
+    const data=await r.json();
+    if(!r.ok){ alert('启动失败：'+(data.error||'未知错误')+(data.detail?('\n'+data.detail):'')); return; }
+    _selectedTaskId=taskId;
+    await loadTasks();
+  }catch(e){ alert('启动请求失败：'+e.message); }
+}
+async function retryFailedTask(taskId, ev){
+  if(ev) ev.stopPropagation();
+  const ok=confirm('确认只重试任务 '+taskId+' 的失败帖子？');
+  if(!ok) return;
+  try{
+    const r=await fetch('/api/tasks/'+taskId+'/retry-failed',{method:'POST'});
+    const data=await r.json();
+    if(!r.ok){ alert('重试启动失败：'+(data.error||'未知错误')+(data.detail?('\n'+data.detail):'')); return; }
+    _selectedTaskId=taskId;
+    await loadTasks();
+  }catch(e){ alert('重试请求失败：'+e.message); }
+}
+async function resetFailedTask(taskId, ev){
+  if(ev) ev.stopPropagation();
+  const ok=confirm('确认把失败帖子重置为待处理？\n重置后任务会回到待处理，需要再手动启动。');
+  if(!ok) return;
+  try{
+    const r=await fetch('/api/tasks/'+taskId+'/reset-failed',{method:'POST'});
+    const data=await r.json();
+    if(!r.ok){ alert('重置失败：'+(data.error||'未知错误')); return; }
+    _selectedTaskId=taskId;
+    await loadTasks();
+  }catch(e){ alert('重置请求失败：'+e.message); }
+}
+async function cancelTask(taskId, ev){
+  if(ev) ev.stopPropagation();
+  const ok=confirm('确认终止任务 '+taskId+'？\n会尝试停止后台 worker，并把运行中的帖子标记为失败。');
+  if(!ok) return;
+  try{
+    const r=await fetch('/api/tasks/'+taskId+'/cancel',{method:'POST'});
+    const data=await r.json();
+    if(!r.ok){ alert('终止失败：'+(data.error||'未知错误')); return; }
+    _selectedTaskId=taskId;
+    await loadTasks();
+  }catch(e){ alert('终止请求失败：'+e.message); }
+}
+async function archiveTask(taskId, ev){
+  if(ev) ev.stopPropagation();
+  const ok=confirm('确认归档任务 '+taskId+'？\n归档后会从当前列表移到「已归档」。');
+  if(!ok) return;
+  try{
+    const r=await fetch('/api/tasks/'+taskId+'/archive',{method:'POST'});
+    const data=await r.json();
+    if(!r.ok){ alert('归档失败：'+(data.error||'未知错误')); return; }
+    _selectedTaskId='';
+    await loadTasks();
+  }catch(e){ alert('归档请求失败：'+e.message); }
+}
+async function unarchiveTask(taskId, ev){
+  if(ev) ev.stopPropagation();
+  try{
+    const r=await fetch('/api/tasks/'+taskId+'/unarchive',{method:'POST'});
+    const data=await r.json();
+    if(!r.ok){ alert('取消归档失败：'+(data.error||'未知错误')); return; }
+    _selectedTaskId='';
+    await loadTasks();
+  }catch(e){ alert('取消归档请求失败：'+e.message); }
+}
+async function loadTaskLog(taskId){
+  const box=document.getElementById('taskLogContent');
+  if(!box) return;
+  box.textContent='加载日志中…';
+  try{
+    const log=await fetchJSON('/api/tasks/'+taskId+'/log?lines=120');
+    if(log.error){ box.textContent=log.error; return; }
+    const lines=log.lines||[];
+    box.textContent=lines.length?lines.join('\n'):'暂无任务日志';
+    box.scrollTop=box.scrollHeight;
+  }catch(e){
+    box.textContent='日志加载失败：'+e.message;
+  }
+}
+async function showTaskDetail(taskId, keepScroll){
+  _selectedTaskId=taskId;
   const task=await fetchJSON('/api/tasks/'+taskId);
   if(!task||task.error) return;
-  alert('任务：'+task.name+'\nID：'+task.id+'\n状态：'+statusLabel(task.status)+'\n\n总帖子：'+task.total_posts+'\n已完成：'+task.completed_posts+'\n失败：'+task.failed_posts+'\n新增评论：'+task.total_comments_added+'\n\n配置：'+JSON.stringify(task.config_json||{},null,2));
+  const posts=await fetchJSON('/api/tasks/'+taskId+'/posts');
+  const config=parseTaskConfig(task);
+  const done=(task.completed_posts||0)+(task.failed_posts||0);
+  const pending=(task.post_status&&task.post_status.pending)||0;
+  const running=(task.post_status&&task.post_status.running)||0;
+  const detail=document.getElementById('taskDetail');
+  const postRows=(posts||[]).slice(0,50).map(p=>{
+    const before=p.comment_count_before||0;
+    const after=p.comment_count_after||0;
+    const added=Math.max(after-before,0);
+    return `<div class="task-post">
+      <span class="status-chip ${escapeHtml(p.status||'pending')}">${statusLabel(p.status||'pending')}</span>
+      <div>
+        <div class="task-post-title" title="${escapeHtml(p.title||'')}">${escapeHtml(p.title||'(无标题)')}</div>
+        <div class="task-post-meta">${escapeHtml(p.note_id||'')} · ${escapeHtml(p.source_keyword||'')}</div>
+      </div>
+      <div class="task-post-count">${before} → ${after}<br><span style="color:var(--green)">+${added}</span></div>
+      ${p.error_message?`<div class="task-post-error">${escapeHtml(p.error_message)}</div>`:''}
+    </div>`;
+  }).join('');
+  detail.innerHTML=`<div class="task-detail-head">
+    <div>
+      <div class="task-detail-title">${escapeHtml(task.name)}</div>
+      <div class="task-detail-sub"><span class="mono">${escapeHtml(task.id)}</span> · ${new Date(task.created_at*1000).toLocaleString('zh-CN')}</div>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <span class="status-chip ${task.status}">${statusLabel(task.status)}</span>
+      ${taskActionButtons(task, false)}
+    </div>
+  </div>
+  <div class="task-stat-grid">
+    <div class="task-stat"><div class="v">${task.total_posts||0}</div><div class="k">总帖子</div></div>
+    <div class="task-stat"><div class="v">${done}</div><div class="k">已处理</div></div>
+    <div class="task-stat"><div class="v">${pending}</div><div class="k">待处理</div></div>
+    <div class="task-stat"><div class="v">${task.total_comments_added||0}</div><div class="k">新增评论</div></div>
+  </div>
+  <div class="task-config">${renderTaskConfig(config)}</div>
+  <div class="task-meta" style="margin-bottom:10px">
+    <span>运行中 ${running}</span>
+    <span>完成 ${task.completed_posts||0}</span>
+    <span>失败 ${task.failed_posts||0}</span>
+    ${task.log_path?`<span title="${escapeHtml(task.log_path)}">日志 ${escapeHtml(task.log_path.split('/').pop())}</span>`:''}
+    ${task.archived_at?`<span>已归档 ${new Date(task.archived_at*1000).toLocaleString('zh-CN')}</span>`:''}
+    ${task.error_message?`<span style="color:var(--red)">错误：${escapeHtml(task.error_message)}</span>`:''}
+  </div>
+  <div class="task-post-list">
+    ${postRows||'<div class="empty">暂无帖子明细</div>'}
+  </div>
+  ${(posts||[]).length>50?`<div class="composer-note" style="margin-top:8px">仅展示前 50 条，共 ${(posts||[]).length} 条。</div>`:''}
+  <div class="task-log-box">
+    <div class="task-log-head">
+      <span>任务日志尾部</span>
+      <button class="btn btn-sm" onclick="loadTaskLog('${task.id}')">刷新日志</button>
+    </div>
+    <div class="task-log-content" id="taskLogContent">加载日志中…</div>
+  </div>`;
+  document.querySelectorAll('.task-item').forEach(item=>item.classList.toggle('active', item.getAttribute('onclick')===`showTaskDetail('${taskId}')`));
+  if(!keepScroll) detail.scrollTop=0;
+  containAllScrollAreas(detail);
+  loadTaskLog(taskId);
 }
 
 /* ============================================================
@@ -1076,6 +1495,7 @@ function switchTab(name){
   document.getElementById('tabTask').classList.toggle('active', !isWorth);
   document.getElementById('panelWorth').classList.toggle('active', isWorth);
   document.getElementById('panelTask').classList.toggle('active', !isWorth);
+  if(!isWorth) loadTasks();
 }
 
 /* ============================================================
@@ -1142,6 +1562,7 @@ function toggleAutoRefresh(){
    ============================================================ */
 async function init(){
   await loadGroups();
+  containAllScrollAreas();
   refreshAll();
 }
 init();

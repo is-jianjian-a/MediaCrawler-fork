@@ -588,6 +588,22 @@ class XiaoHongShuCrawler(AbstractCrawler):
         """Get note comments with keyword filtering and quantity limitation"""
         async with semaphore:
             utils.logger.info(f"[comments] fetching comments for note_id={note_id}")
+            try:
+                utils.logger.info(f"[comments] refresh note detail before comments note_id={note_id}")
+                note_detail = await self.xhs_client.get_note_by_id(
+                    note_id=note_id,
+                    xsec_source="pc_search",
+                    xsec_token=xsec_token,
+                )
+                if note_detail:
+                    note_detail.update({"xsec_token": xsec_token, "xsec_source": "pc_search"})
+                    await xhs_store.update_xhs_note(note_detail)
+                    utils.logger.info(f"[comments] refreshed note detail note_id={note_id}")
+                else:
+                    utils.logger.warning(f"[comments] note detail refresh returned empty note_id={note_id}")
+            except Exception as exc:
+                utils.logger.warning(f"[comments] note detail refresh failed note_id={note_id}: {exc}")
+
             # Use fixed crawling interval
             crawl_interval = config.CRAWLER_MAX_SLEEP_SEC
             await self.xhs_client.get_note_all_comments(
@@ -692,6 +708,9 @@ class XiaoHongShuCrawler(AbstractCrawler):
             return browser_context
 
         except Exception as e:
+            if getattr(config, "REQUIRE_CDP_MODE", False):
+                utils.logger.error(f"[XiaoHongShuCrawler] CDP mode is required but launch failed: {e}")
+                raise
             utils.logger.error(f"[XiaoHongShuCrawler] CDP mode launch failed, falling back to standard mode: {e}")
             # Fall back to standard mode
             chromium = playwright.chromium

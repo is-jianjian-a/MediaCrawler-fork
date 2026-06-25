@@ -77,7 +77,10 @@ ENABLE_CDP_MODE = os.getenv("MEDIACRAWLER_ENABLE_CDP", "true").lower() in ("1", 
 
 # CDP 调试端口，用于与浏览器通信
 # 如果端口被占用，系统会自动尝试下一个可用端口
-CDP_DEBUG_PORT = 9222
+CDP_DEBUG_PORT = int(os.getenv("MEDIACRAWLER_CDP_DEBUG_PORT", "9222"))
+
+# 是否强制要求 CDP 模式可用。开启后 CDP 连接失败不会自动回退标准浏览器模式。
+REQUIRE_CDP_MODE = os.getenv("MEDIACRAWLER_REQUIRE_CDP", "false").lower() in ("1", "true", "yes")
 
 # 自定义浏览器路径（可选）
 # 如果为空，系统会自动检测 Chrome/Edge 的安装路径

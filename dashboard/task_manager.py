@@ -56,13 +56,18 @@ def init_task_db():
             total_comments_added INTEGER DEFAULT 0,
             config_json TEXT,
             log_path TEXT,
+            worker_pid INTEGER,
+            archived_at REAL,
             error_message TEXT
         )
     """)
-    conn.execute(
-        "CREATE UNIQUE INDEX IF NOT EXISTS idx_task_posts_task_note "
-        "ON task_posts(task_id, note_id)"
-    )
+    existing_cols = {
+        row[1] for row in conn.execute("PRAGMA table_info(tasks)").fetchall()
+    }
+    if "worker_pid" not in existing_cols:
+        conn.execute("ALTER TABLE tasks ADD COLUMN worker_pid INTEGER")
+    if "archived_at" not in existing_cols:
+        conn.execute("ALTER TABLE tasks ADD COLUMN archived_at REAL")
     conn.execute("""
         CREATE TABLE IF NOT EXISTS task_posts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -79,6 +84,10 @@ def init_task_db():
             FOREIGN KEY (task_id) REFERENCES tasks(id)
         )
     """)
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_task_posts_task_note "
+        "ON task_posts(task_id, note_id)"
+    )
     conn.commit()
     conn.close()
 
@@ -133,15 +142,52 @@ def get_task(task_id: str) -> Optional[Dict]:
     return task
 
 
-def list_tasks() -> List[Dict]:
+def list_tasks(archived: bool = False) -> List[Dict]:
     """List all tasks."""
     conn = sqlite3.connect(TASK_DB)
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
-    cur.execute("SELECT * FROM tasks ORDER BY created_at DESC")
+    if archived:
+        cur.execute(
+            "SELECT * FROM tasks WHERE archived_at IS NOT NULL ORDER BY archived_at DESC"
+        )
+    else:
+        cur.execute(
+            "SELECT * FROM tasks WHERE archived_at IS NULL ORDER BY created_at DESC"
+        )
     tasks = [dict(r) for r in cur.fetchall()]
+    for task in tasks:
+        cur.execute(
+            "SELECT status, COUNT(*) as cnt FROM task_posts WHERE task_id = ? GROUP BY status",
+            (task["id"],),
+        )
+        task["post_status"] = {r["status"]: r["cnt"] for r in cur.fetchall()}
     conn.close()
     return tasks
+
+
+def set_task_archived(task_id: str, archived: bool) -> tuple[bool, str]:
+    """Archive or restore a task."""
+    conn = sqlite3.connect(TASK_DB, timeout=10)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT status FROM tasks WHERE id = ?", (task_id,)
+        ).fetchone()
+        if not row:
+            conn.rollback()
+            return False, "task not found"
+        if row[0] in ("starting", "running"):
+            conn.rollback()
+            return False, f"task is {row[0]}, cannot archive"
+        conn.execute(
+            "UPDATE tasks SET archived_at = ? WHERE id = ?",
+            (time.time() if archived else None, task_id),
+        )
+        conn.commit()
+        return True, ""
+    finally:
+        conn.close()
 
 
 def update_post_status(task_id: str, note_id: str, status: str,
@@ -215,6 +261,17 @@ def start_task(task_id: str, log_path: str = None):
     conn.close()
 
 
+def set_task_worker_pid(task_id: str, pid: int):
+    """Persist the background worker pid so the dashboard can terminate it."""
+    conn = sqlite3.connect(TASK_DB, timeout=10)
+    conn.execute(
+        "UPDATE tasks SET worker_pid = ? WHERE id = ?",
+        (pid, task_id),
+    )
+    conn.commit()
+    conn.close()
+
+
 def claim_task(task_id: str, retry_failed: bool = False) -> tuple[bool, str]:
     """Atomically reserve a pending task before launching its worker."""
     conn = sqlite3.connect(TASK_DB, timeout=10)
@@ -226,10 +283,10 @@ def claim_task(task_id: str, retry_failed: bool = False) -> tuple[bool, str]:
         if not row:
             conn.rollback()
             return False, "task not found"
-        allowed_status = "completed_with_errors" if retry_failed else "pending"
-        if row[0] != allowed_status:
+        allowed_statuses = ("completed_with_errors", "pending") if retry_failed else ("pending",)
+        if row[0] not in allowed_statuses:
             conn.rollback()
-            return False, f"task is {row[0]}, expected {allowed_status}"
+            return False, f"task is {row[0]}, expected {'/'.join(allowed_statuses)}"
         post_status = "failed" if retry_failed else "pending"
         pending = conn.execute(
             "SELECT COUNT(*) FROM task_posts WHERE task_id = ? AND status = ?",
@@ -240,7 +297,7 @@ def claim_task(task_id: str, retry_failed: bool = False) -> tuple[bool, str]:
             return False, "task has no pending posts"
         conn.execute(
             """UPDATE tasks SET status = 'starting', started_at = ?,
-               error_message = NULL WHERE id = ?""",
+               error_message = NULL, worker_pid = NULL WHERE id = ?""",
             (time.time(), task_id),
         )
         conn.commit()
@@ -261,6 +318,76 @@ def fail_task_start(task_id: str, error: str):
     conn.close()
 
 
+def reset_failed_posts(task_id: str) -> tuple[bool, str]:
+    """Move failed posts back to pending for manual rerun."""
+    conn = sqlite3.connect(TASK_DB, timeout=10)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT status FROM tasks WHERE id = ?", (task_id,)
+        ).fetchone()
+        if not row:
+            conn.rollback()
+            return False, "task not found"
+        if row[0] not in ("completed_with_errors", "pending"):
+            conn.rollback()
+            return False, f"task is {row[0]}, cannot reset failed posts"
+        failed = conn.execute(
+            "SELECT COUNT(*) FROM task_posts WHERE task_id = ? AND status = 'failed'",
+            (task_id,),
+        ).fetchone()[0]
+        if not failed:
+            conn.rollback()
+            return False, "task has no failed posts"
+        conn.execute(
+            """UPDATE task_posts SET status = 'pending', error_message = NULL
+               WHERE task_id = ? AND status = 'failed'""",
+            (task_id,),
+        )
+        conn.execute(
+            """UPDATE tasks SET status = 'pending', completed_at = NULL,
+               failed_posts = 0, error_message = NULL, worker_pid = NULL
+               WHERE id = ?""",
+            (task_id,),
+        )
+        conn.commit()
+        return True, ""
+    finally:
+        conn.close()
+
+
+def mark_task_cancelled(task_id: str, error: str = "cancelled by dashboard"):
+    """Mark a running/starting task as manually cancelled."""
+    conn = sqlite3.connect(TASK_DB, timeout=10)
+    conn.execute(
+        """UPDATE task_posts SET status = 'failed', error_message = ?
+           WHERE task_id = ? AND status = 'running'""",
+        (error, task_id),
+    )
+    completed = conn.execute(
+        "SELECT COUNT(*) FROM task_posts WHERE task_id = ? AND status = 'completed'",
+        (task_id,),
+    ).fetchone()[0]
+    failed = conn.execute(
+        "SELECT COUNT(*) FROM task_posts WHERE task_id = ? AND status = 'failed'",
+        (task_id,),
+    ).fetchone()[0]
+    comments_added = conn.execute(
+        """SELECT COALESCE(SUM(MAX(comment_count_after - comment_count_before, 0)), 0)
+           FROM task_posts WHERE task_id = ?""",
+        (task_id,),
+    ).fetchone()[0]
+    conn.execute(
+        """UPDATE tasks SET status = 'completed_with_errors',
+           completed_at = ?, error_message = ?, worker_pid = NULL,
+           completed_posts = ?, failed_posts = ?, total_comments_added = ?
+           WHERE id = ? AND status IN ('starting', 'running')""",
+        (time.time(), error, completed, failed, comments_added, task_id),
+    )
+    conn.commit()
+    conn.close()
+
+
 def finish_task(task_id: str):
     """Finish a task, retaining whether any posts failed."""
     conn = sqlite3.connect(TASK_DB)
@@ -276,7 +403,7 @@ def finish_task(task_id: str):
         status = 'completed'
     completed_at = None if status == 'pending' else time.time()
     conn.execute(
-        "UPDATE tasks SET status = ?, completed_at = ? WHERE id = ?",
+        "UPDATE tasks SET status = ?, completed_at = ?, worker_pid = NULL WHERE id = ?",
         (status, completed_at, task_id),
     )
     conn.commit()
@@ -291,12 +418,12 @@ def get_task_posts(task_id: str, status: str = None) -> List[Dict]:
 
     if status:
         cur.execute(
-            """SELECT * FROM task_posts WHERE task_id = ? AND status = ?""",
+            """SELECT * FROM task_posts WHERE task_id = ? AND status = ? ORDER BY id ASC""",
             (task_id, status)
         )
     else:
         cur.execute(
-            """SELECT * FROM task_posts WHERE task_id = ?""",
+            """SELECT * FROM task_posts WHERE task_id = ? ORDER BY id ASC""",
             (task_id,)
         )
 

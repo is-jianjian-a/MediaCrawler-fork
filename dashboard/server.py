@@ -9,11 +9,15 @@ import json
 import logging
 import os
 import shutil
+import socket
 import sqlite3
 import subprocess
 import sys
 import threading
 import time
+import urllib.error
+import urllib.request
+import asyncio
 
 from flask import Flask, jsonify, request
 
@@ -38,12 +42,189 @@ STATIC_DIR = os.path.join(DASHBOARD_DIR, "static")
 SNAPSHOT_INTERVAL = 30
 MAX_DB_SIZE_MB = 100
 MAX_HISTORY_HOURS = 72
+MIN_COMMENT_TASK_BATCH_SIZE = int(os.getenv("MEDIACRAWLER_MIN_COMMENT_TASK_BATCH_SIZE", "5"))
 
 logging.basicConfig(level=logging.INFO, format="[dashboard] %(levelname)s %(message)s")
 logger = logging.getLogger("dashboard")
 
 app = Flask(__name__, static_folder=STATIC_DIR, static_url_path="/static")
 init_task_db()
+
+
+def _cdp_debug_port() -> int:
+    try:
+        return int(os.getenv("MEDIACRAWLER_CDP_DEBUG_PORT", "9222"))
+    except ValueError:
+        return 9222
+
+
+def _is_port_open(port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(0.3)
+        return sock.connect_ex(("127.0.0.1", port)) == 0
+
+
+async def _verify_playwright_cdp(port: int, timeout: float = 3.0):
+    try:
+        from playwright.async_api import async_playwright
+
+        async with async_playwright() as playwright:
+            await playwright.chromium.connect_over_cdp(
+                f"http://127.0.0.1:{port}",
+                timeout=timeout * 1000,
+            )
+        return True, ""
+    except Exception as exc:
+        return False, str(exc)
+
+
+def _check_playwright_cdp(port: int, timeout: float = 3.0):
+    try:
+        return asyncio.run(_verify_playwright_cdp(port, timeout))
+    except Exception as exc:
+        return False, str(exc)
+
+
+def _find_available_cdp_port(start_port: int, max_attempts: int = 20) -> int:
+    for port in range(start_port, start_port + max_attempts):
+        status = check_cdp_remote_debugging(timeout=0.5, port=port, verify_playwright=True)
+        if status.get("ok"):
+            return port
+        if not _is_port_open(port):
+            return port
+    raise RuntimeError(f"no available CDP port found from {start_port}")
+
+
+def _chrome_binary_path() -> str:
+    configured = os.getenv("MEDIACRAWLER_BROWSER_PATH", "")
+    candidates = [
+        configured,
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
+        shutil.which("google-chrome") or "",
+        shutil.which("chromium") or "",
+    ]
+    for candidate in candidates:
+        if candidate and os.path.exists(candidate):
+            return candidate
+    raise RuntimeError("Chrome binary not found. Set MEDIACRAWLER_BROWSER_PATH.")
+
+
+def check_cdp_remote_debugging(timeout: float = 2.0, port: int = None, verify_playwright: bool = False):
+    port = port or _cdp_debug_port()
+    url = f"http://127.0.0.1:{port}/json/version"
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as response:
+            if response.status != 200:
+                return {
+                    "ok": False,
+                    "port": port,
+                    "url": url,
+                    "error": f"HTTP {response.status}",
+                }
+            data = json.loads(response.read().decode("utf-8", errors="replace") or "{}")
+    except urllib.error.URLError as exc:
+        return {
+            "ok": False,
+            "port": port,
+            "url": url,
+            "error": str(exc),
+            "hint": (
+                "Chrome remote debugging is not reachable. Open Chrome and enable "
+                "chrome://inspect/#remote-debugging, or start Chrome with "
+                f"--remote-debugging-port={port}."
+            ),
+        }
+    except Exception as exc:
+        return {"ok": False, "port": port, "url": url, "error": str(exc)}
+    browser = data.get("Browser", "")
+    web_socket = data.get("webSocketDebuggerUrl", "")
+    ok = bool(browser or web_socket)
+    result = {
+        "ok": ok,
+        "port": port,
+        "url": url,
+        "browser": browser,
+        "webSocketDebuggerUrl": web_socket,
+        "raw": data,
+    }
+    if verify_playwright and ok:
+        playwright_ok, playwright_error = _check_playwright_cdp(port, timeout=min(timeout, 3.0))
+        result["playwright_ok"] = playwright_ok
+        if not playwright_ok:
+            result["ok"] = False
+            result["error"] = playwright_error
+            result["hint"] = (
+                "CDP endpoint is reachable, but Playwright cannot connect to it. "
+                "Use the Dashboard CDP Chrome launcher to start a compatible remote-debugging browser."
+            )
+    return result
+
+
+def start_cdp_chrome():
+    start_port = _cdp_debug_port()
+    existing = check_cdp_remote_debugging(port=start_port, verify_playwright=True)
+    if existing.get("ok"):
+        return {**existing, "started": False, "message": "CDP already available"}
+
+    port = _find_available_cdp_port(start_port)
+    reusable = check_cdp_remote_debugging(port=port, verify_playwright=True)
+    if reusable.get("ok"):
+        os.environ["MEDIACRAWLER_CDP_DEBUG_PORT"] = str(port)
+        return {**reusable, "started": False, "message": "CDP already available"}
+
+    user_data_dir = os.path.join(MEDIACRAWLER_ROOT, "browser_data", f"chrome-cdp-debug-{port}")
+    os.makedirs(user_data_dir, exist_ok=True)
+    chrome = _chrome_binary_path()
+    command = [
+        chrome,
+        f"--remote-debugging-port={port}",
+        "--remote-debugging-address=0.0.0.0",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--disable-background-timer-throttling",
+        "--disable-backgrounding-occluded-windows",
+        "--disable-renderer-backgrounding",
+        "--disable-features=TranslateUI",
+        "--disable-ipc-flooding-protection",
+        "--disable-hang-monitor",
+        "--disable-prompt-on-repost",
+        "--disable-sync",
+        "--disable-dev-shm-usage",
+        "--no-sandbox",
+        "--disable-blink-features=AutomationControlled",
+        "--exclude-switches=enable-automation",
+        "--disable-infobars",
+        "--start-maximized",
+        f"--user-data-dir={user_data_dir}",
+        "https://www.xiaohongshu.com",
+    ]
+    subprocess.Popen(
+        command,
+        cwd=MEDIACRAWLER_ROOT,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    os.environ["MEDIACRAWLER_CDP_DEBUG_PORT"] = str(port)
+
+    deadline = time.time() + 10
+    last_status = None
+    while time.time() < deadline:
+        last_status = check_cdp_remote_debugging(timeout=1, port=port, verify_playwright=True)
+        if last_status.get("ok"):
+            return {
+                **last_status,
+                "started": True,
+                "message": "CDP Chrome started",
+                "user_data_dir": user_data_dir,
+            }
+        time.sleep(0.5)
+
+    raise RuntimeError(
+        f"Chrome was launched but CDP did not become ready on port {port}: "
+        f"{(last_status or {}).get('error') or (last_status or {}).get('hint') or 'unknown error'}"
+    )
 
 # --- Auto-detect crawler DB at startup ---
 _crawler_db_path = None
@@ -322,6 +503,78 @@ def api_latest():
         conn.close()
 
 
+@app.route("/api/activity")
+def api_activity():
+    """Latest activity feed — posts and comments interleaved by add_ts.
+
+    Mode-aware: whatever the crawler is producing right now (posts or
+    comments) bubbles to the top, so the panel always reflects real
+    crawler output instead of freezing on a stale note during comment
+    supplementation.
+    """
+    keywords, _ = get_config_values()
+    conn = _with_crawler_db()
+    if not conn:
+        return jsonify({"items": [], "now": time.time(), "error": "no DB"})
+    if not keywords:
+        return jsonify({"items": [], "now": time.time()})
+    try:
+        cur = conn.cursor()
+        ph = _kw_placeholders(keywords)
+        limit = request.args.get("limit", 12, type=int)
+        limit = max(1, min(limit, 50))
+
+        # Latest posts
+        cur.execute(
+            f"SELECT note_id, title, source_keyword, liked_count, comment_count, "
+            f"image_list, note_url, add_ts "
+            f"FROM xhs_note WHERE source_keyword IN ({ph}) "
+            f"ORDER BY add_ts DESC LIMIT ?",
+            keywords + [limit],
+        )
+        items = []
+        for r in cur.fetchall():
+            items.append({
+                "type": "post",
+                "ts": (r[7] or 0) / 1000,
+                "note_id": r[0],
+                "title": r[1] or "(无标题)",
+                "source_keyword": r[2] or "",
+                "liked_count": r[3] or 0,
+                "comment_count": r[4] or 0,
+                "image": ([u.strip().strip('"') for u in (r[5] or "").split(",") if u.strip()] or [None])[0],
+                "note_url": r[6],
+            })
+
+        # Latest comments (joined to parent note for context)
+        cur.execute(
+            f"SELECT c.comment_id, c.content, c.nickname, c.like_count, "
+            f"c.ip_location, c.add_ts, n.title, n.source_keyword, c.note_id "
+            f"FROM xhs_note_comment c JOIN xhs_note n ON c.note_id = n.note_id "
+            f"WHERE n.source_keyword IN ({ph}) "
+            f"ORDER BY c.add_ts DESC LIMIT ?",
+            keywords + [limit],
+        )
+        for r in cur.fetchall():
+            items.append({
+                "type": "comment",
+                "ts": (r[5] or 0) / 1000,
+                "comment_id": r[0],
+                "content": r[1] or "",
+                "nickname": r[2] or "用户",
+                "like_count": r[3] or 0,
+                "ip_location": r[4] or "",
+                "note_title": r[6] or "(无标题)",
+                "source_keyword": r[7] or "",
+                "note_id": r[8],
+            })
+
+        items.sort(key=lambda x: x["ts"], reverse=True)
+        return jsonify({"items": items[:limit], "now": time.time()})
+    finally:
+        conn.close()
+
+
 @app.route("/api/health")
 def api_health():
     keywords, _ = get_config_values()
@@ -355,6 +608,19 @@ def api_health():
         "crawler_platform": platform,
         "last_write_seconds_ago": last_write,
     })
+
+
+@app.route("/api/cdp/status")
+def api_cdp_status():
+    return jsonify(check_cdp_remote_debugging(verify_playwright=True))
+
+
+@app.route("/api/cdp/start", methods=["POST"])
+def api_cdp_start():
+    try:
+        return jsonify(start_cdp_chrome())
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
 
 
 # --- comment quality stats ---
@@ -446,7 +712,8 @@ def api_quality():
 @app.route("/api/tasks")
 def api_list_tasks():
     from task_manager import list_tasks
-    return jsonify(list_tasks())
+    archived = request.args.get("archived") in ("1", "true", "yes")
+    return jsonify(list_tasks(archived=archived))
 
 
 @app.route("/api/tasks/<task_id>")
@@ -494,30 +761,45 @@ def api_create_task():
     return jsonify({"id": task_id, "ok": True})
 
 
-@app.route("/api/tasks/<task_id>/start", methods=["POST"])
-def api_start_task(task_id):
-    from task_manager import claim_task, fail_task_start, get_task
+def _launch_comment_task(task_id, retry_failed=False):
+    from task_manager import claim_task, fail_task_start, get_task, set_task_worker_pid
 
-    claimed, error = claim_task(task_id)
+    claimed, error = claim_task(task_id, retry_failed=retry_failed)
     if not claimed:
         status = 404 if error == "task not found" else 409
         return jsonify({"error": error}), status
+
+    cdp_status = check_cdp_remote_debugging(verify_playwright=True)
+    if not cdp_status.get("ok"):
+        message = cdp_status.get("hint") or cdp_status.get("error") or "CDP remote debugging is not ready"
+        fail_task_start(task_id, message)
+        return jsonify({
+            "error": "CDP remote debugging is not ready",
+            "detail": message,
+            "cdp": cdp_status,
+        }), 409
 
     task = get_task(task_id)
     try:
         task_config = json.loads(task.get("config_json") or "{}")
     except (TypeError, json.JSONDecodeError):
         task_config = {}
+    effective_batch_size = max(
+        MIN_COMMENT_TASK_BATCH_SIZE,
+        min(int(task_config.get("batch_size", 5) or 5), 20),
+    )
 
     uv = shutil.which("uv")
     command = ([uv, "run", "python"] if uv else [sys.executable]) + [
         os.path.join(DASHBOARD_DIR, "comment_fetcher.py"),
         "--task-id", task_id,
-        "--batch-size", str(task_config.get("batch_size", 5)),
+        "--batch-size", str(effective_batch_size),
         "--max-comments", str(task_config.get("max_comments", 200)),
         "--max-sub-comments", str(task_config.get("max_sub_comments", 200)),
         "--delay", str(task_config.get("delay", 5)),
     ]
+    if retry_failed:
+        command.append("--retry-failed")
     if task_config.get("get_sub_comments"):
         command.append("--get-sub-comments")
 
@@ -529,10 +811,118 @@ def api_start_task(task_id):
             stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
+        set_task_worker_pid(task_id, worker.pid)
     except Exception as exc:
         fail_task_start(task_id, str(exc))
         return jsonify({"error": f"failed to start worker: {exc}"}), 500
     return jsonify({"ok": True, "pid": worker.pid, "status": "starting"}), 202
+
+
+@app.route("/api/tasks/<task_id>/start", methods=["POST"])
+def api_start_task(task_id):
+    retry_failed = request.args.get("retry_failed") in ("1", "true", "yes")
+    return _launch_comment_task(task_id, retry_failed=retry_failed)
+
+
+@app.route("/api/tasks/<task_id>/retry-failed", methods=["POST"])
+def api_retry_failed_task(task_id):
+    return _launch_comment_task(task_id, retry_failed=True)
+
+
+@app.route("/api/tasks/<task_id>/reset-failed", methods=["POST"])
+def api_reset_failed_task(task_id):
+    from task_manager import reset_failed_posts
+    ok, error = reset_failed_posts(task_id)
+    if not ok:
+        status = 404 if error == "task not found" else 409
+        return jsonify({"error": error}), status
+    return jsonify({"ok": True, "status": "pending"})
+
+
+@app.route("/api/tasks/<task_id>/archive", methods=["POST"])
+def api_archive_task(task_id):
+    from task_manager import set_task_archived
+    ok, error = set_task_archived(task_id, archived=True)
+    if not ok:
+        status = 404 if error == "task not found" else 409
+        return jsonify({"error": error}), status
+    return jsonify({"ok": True, "archived": True})
+
+
+@app.route("/api/tasks/<task_id>/unarchive", methods=["POST"])
+def api_unarchive_task(task_id):
+    from task_manager import set_task_archived
+    ok, error = set_task_archived(task_id, archived=False)
+    if not ok:
+        status = 404 if error == "task not found" else 409
+        return jsonify({"error": error}), status
+    return jsonify({"ok": True, "archived": False})
+
+
+@app.route("/api/tasks/<task_id>/cancel", methods=["POST"])
+def api_cancel_task(task_id):
+    from task_manager import get_task, mark_task_cancelled
+
+    task = get_task(task_id)
+    if not task:
+        return jsonify({"error": "task not found"}), 404
+    if task.get("status") not in ("starting", "running"):
+        return jsonify({"error": f"task is {task.get('status')}, cannot cancel"}), 409
+
+    pid = task.get("worker_pid")
+    killed = False
+    kill_errors = []
+    candidate_pids = []
+    if pid:
+        candidate_pids.append(int(pid))
+    else:
+        try:
+            finder = subprocess.run(
+                ["pgrep", "-f", f"comment_fetcher.py.*--task-id {task_id}"],
+                cwd=MEDIACRAWLER_ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            candidate_pids.extend(int(p.strip()) for p in finder.stdout.splitlines() if p.strip())
+        except Exception as exc:
+            kill_errors.append(str(exc))
+
+    for candidate_pid in dict.fromkeys(candidate_pids):
+        try:
+            os.killpg(candidate_pid, 15)
+            killed = True
+        except ProcessLookupError:
+            killed = True
+        except Exception as exc:
+            kill_errors.append(f"{candidate_pid}: {exc}")
+
+    mark_task_cancelled(task_id)
+    return jsonify({"ok": True, "killed": killed, "errors": kill_errors})
+
+
+@app.route("/api/tasks/<task_id>/log")
+def api_get_task_log(task_id):
+    from task_manager import get_task
+
+    task = get_task(task_id)
+    if not task:
+        return jsonify({"error": "task not found", "lines": []}), 404
+    log_path = task.get("log_path")
+    if not log_path or not os.path.exists(log_path):
+        return jsonify({"lines": [], "total": 0, "log_path": log_path})
+    lines = request.args.get("lines", 120, type=int)
+    lines = max(1, min(lines, 500))
+    try:
+        with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+            all_lines = f.read().splitlines()
+    except Exception as exc:
+        return jsonify({"error": str(exc), "lines": [], "log_path": log_path}), 500
+    return jsonify({
+        "lines": all_lines[-lines:],
+        "total": len(all_lines),
+        "log_path": log_path,
+    })
 
 
 @app.route("/api/tasks/<task_id>/complete", methods=["POST"])

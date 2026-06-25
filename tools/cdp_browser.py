@@ -230,22 +230,13 @@ class CDPBrowserManager:
         Test if CDP connection is available
         """
         try:
-            # Simple socket connection test
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.settimeout(5)
-                result = s.connect_ex(("localhost", debug_port))
-                if result == 0:
-                    utils.logger.info(
-                        f"[CDPBrowserManager] CDP port {debug_port} is accessible"
-                    )
-                    return True
-                else:
-                    utils.logger.warning(
-                        f"[CDPBrowserManager] CDP port {debug_port} is not accessible"
-                    )
-                    return False
+            ws_url = await self._get_browser_websocket_url(debug_port)
+            utils.logger.info(
+                f"[CDPBrowserManager] CDP endpoint {debug_port} is ready: {ws_url}"
+            )
+            return True
         except Exception as e:
-            utils.logger.warning(f"[CDPBrowserManager] CDP connection test failed: {e}")
+            utils.logger.warning(f"[CDPBrowserManager] CDP endpoint test failed: {e}")
             return False
 
     async def _launch_browser(self, browser_path: str, headless: bool):
@@ -316,11 +307,12 @@ class CDPBrowserManager:
         Connect to browser via CDP
         """
         try:
+            ws_url = await self._get_browser_websocket_url(self.debug_port)
             if config.CDP_CONNECT_EXISTING:
-                # For existing browser (e.g. chrome://inspect/#remote-debugging),
-                # Chrome exposes a WebSocket at /devtools/browser and may show a confirmation
-                # dialog to the user. Use ws:// with a longer timeout to wait for user confirmation.
-                ws_url = f"ws://localhost:{self.debug_port}/devtools/browser"
+                # For an existing browser, Chrome returns the concrete browser WebSocket
+                # endpoint from /json/version. Do not hand-build /devtools/browser:
+                # Chrome's remote-debugging toggle exposes a tokenized URL and the
+                # non-tokenized path returns 404.
                 utils.logger.info(f"[CDPBrowserManager] Connecting to existing browser via CDP: {ws_url}")
                 utils.logger.info(
                     "[CDPBrowserManager] Please check your browser for a confirmation dialog and accept it"
@@ -329,8 +321,6 @@ class CDPBrowserManager:
                     ws_url, timeout=config.BROWSER_LAUNCH_TIMEOUT * 1000
                 )
             else:
-                # For launched browser, get WebSocket URL first
-                ws_url = await self._get_browser_websocket_url(self.debug_port)
                 utils.logger.info(f"[CDPBrowserManager] Connecting to browser via CDP: {ws_url}")
                 self.browser = await playwright.chromium.connect_over_cdp(ws_url)
 
@@ -429,15 +419,20 @@ class CDPBrowserManager:
             # Close browser context
             if self.browser_context:
                 try:
-                    # Check if context is already closed
-                    # Try to get page list, if fails means already closed
-                    try:
-                        pages = self.browser_context.pages
-                        if pages is not None:
-                            await self.browser_context.close()
-                            utils.logger.info("[CDPBrowserManager] Browser context closed")
-                    except:
-                        utils.logger.debug("[CDPBrowserManager] Browser context already closed")
+                    if config.CDP_CONNECT_EXISTING:
+                        utils.logger.info(
+                            "[CDPBrowserManager] Connected to existing browser, keeping browser context open"
+                        )
+                    else:
+                        # Check if context is already closed
+                        # Try to get page list, if fails means already closed
+                        try:
+                            pages = self.browser_context.pages
+                            if pages is not None:
+                                await self.browser_context.close()
+                                utils.logger.info("[CDPBrowserManager] Browser context closed")
+                        except:
+                            utils.logger.debug("[CDPBrowserManager] Browser context already closed")
                 except Exception as context_error:
                     # Only log warning if error is not due to already being closed
                     error_msg = str(context_error).lower()
@@ -454,7 +449,11 @@ class CDPBrowserManager:
             if self.browser:
                 try:
                     # Check if browser is still connected
-                    if self.browser.is_connected():
+                    if config.CDP_CONNECT_EXISTING:
+                        utils.logger.info(
+                            "[CDPBrowserManager] Connected to existing browser, keeping browser connection open"
+                        )
+                    elif self.browser.is_connected():
                         await self.browser.close()
                         utils.logger.info("[CDPBrowserManager] Browser connection disconnected")
                     else:

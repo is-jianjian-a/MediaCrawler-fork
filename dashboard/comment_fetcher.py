@@ -2,6 +2,7 @@
 """Execute dashboard comment-supplement tasks through MediaCrawler detail mode."""
 
 import argparse
+import asyncio
 import json
 import os
 import shutil
@@ -10,6 +11,8 @@ import subprocess
 import sys
 import time
 import traceback
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Dict, Iterable, List
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
@@ -26,6 +29,54 @@ from task_manager import (  # noqa: E402
     start_task,
     update_post_status,
 )
+
+
+def get_cdp_debug_port() -> int:
+    try:
+        return int(os.getenv("MEDIACRAWLER_CDP_DEBUG_PORT", "9222"))
+    except ValueError:
+        return 9222
+
+
+def check_cdp_remote_debugging(port: int = None, timeout: float = 2.0) -> tuple[bool, str]:
+    """Check whether Chrome remote debugging is enabled and reachable."""
+    port = port or get_cdp_debug_port()
+    url = f"http://127.0.0.1:{port}/json/version"
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as response:
+            if response.status != 200:
+                return False, f"CDP endpoint returned HTTP {response.status}: {url}"
+            data = json.loads(response.read().decode("utf-8", errors="replace") or "{}")
+    except urllib.error.URLError as exc:
+        return False, (
+            f"CDP remote debugging is not reachable on port {port}. "
+            "Open Chrome, enable chrome://inspect/#remote-debugging, "
+            f"or start Chrome with --remote-debugging-port={port}. Detail: {exc}"
+        )
+    except Exception as exc:
+        return False, f"CDP check failed on port {port}: {exc}"
+    browser = data.get("Browser", "")
+    web_socket = data.get("webSocketDebuggerUrl", "")
+    if not browser and not web_socket:
+        return False, f"CDP endpoint on port {port} responded but did not look like Chrome DevTools."
+
+    async def verify_playwright():
+        from playwright.async_api import async_playwright
+
+        async with async_playwright() as playwright:
+            await playwright.chromium.connect_over_cdp(
+                f"http://127.0.0.1:{port}",
+                timeout=timeout * 1000,
+            )
+
+    try:
+        asyncio.run(verify_playwright())
+    except Exception as exc:
+        return False, (
+            f"CDP endpoint is reachable on port {port}, but Playwright cannot connect: {exc}. "
+            "Use the Dashboard CDP Chrome launcher to start a compatible remote-debugging browser."
+        )
+    return True, f"CDP remote debugging ready on port {port}: {browser or web_socket}"
 
 
 def chunks(items: List[Dict], size: int) -> Iterable[List[Dict]]:
@@ -126,15 +177,20 @@ class CommentTaskExecutor:
             return True
 
         try:
-            result = subprocess.run(
+            process = subprocess.Popen(
                 command,
                 cwd=MEDIACRAWLER_ROOT,
                 env=self.crawler_environment(),
-                stdout=log_file,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
-                check=False,
+                bufsize=1,
             )
+            assert process.stdout is not None
+            for line in process.stdout:
+                print(line, end="", file=log_file, flush=True)
+            returncode = process.wait()
         except KeyboardInterrupt:
             for task_post, before, _ in prepared:
                 note_id = task_post["note_id"]
@@ -143,12 +199,15 @@ class CommentTaskExecutor:
                     task_id, note_id, "failed", after, "crawler interrupted", before
                 )
             raise
+        except Exception as exc:
+            returncode = 1
+            print(f"[crawler-launch-error] {exc}", file=log_file, flush=True)
 
-        success = result.returncode == 0
+        success = returncode == 0
         for task_post, before, _ in prepared:
             note_id = task_post["note_id"]
             after = self.saved_comment_count(note_id)
-            error = None if success else f"crawler exited with code {result.returncode}"
+            error = None if success else f"crawler exited with code {returncode}"
             update_post_status(
                 task_id, note_id, "completed" if success else "failed",
                 after, error, before,
@@ -162,9 +221,12 @@ class CommentTaskExecutor:
         return success
 
     def crawler_environment(self) -> Dict[str, str]:
-        """Use an isolated standard-browser launch for background tasks."""
+        """Prefer an existing Chrome CDP session for background tasks."""
         env = os.environ.copy()
-        env["MEDIACRAWLER_ENABLE_CDP"] = "false"
+        env["MEDIACRAWLER_ENABLE_CDP"] = "true"
+        env["MEDIACRAWLER_CDP_CONNECT_EXISTING"] = "true"
+        env["MEDIACRAWLER_REQUIRE_CDP"] = "true"
+        env.setdefault("MEDIACRAWLER_CDP_DEBUG_PORT", str(get_cdp_debug_port()))
         default_chrome = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
         if os.path.exists(default_chrome):
             env.setdefault("MEDIACRAWLER_BROWSER_PATH", default_chrome)
@@ -210,6 +272,11 @@ def main() -> int:
         args.get_sub_comments = bool(task_config.get("get_sub_comments", False))
     if args.batch_size < 1 or args.max_comments < 1 or args.max_sub_comments < 0:
         parser.error("batch-size and max-comments must be positive")
+
+    cdp_ok, cdp_message = check_cdp_remote_debugging()
+    if not cdp_ok:
+        parser.error(cdp_message)
+    print(f"[cdp] {cdp_message}")
 
     posts = get_task_posts(args.task_id, status="failed" if args.retry_failed else "pending")
     if args.limit:
