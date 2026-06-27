@@ -318,7 +318,7 @@ async def smart_sleep() -> None:
     if config.ENABLE_RANDOM_SLEEP:
         base = random.uniform(config.CRAWLER_MIN_SLEEP_SEC, config.CRAWLER_MAX_SLEEP_SEC)
         jitter = random.gauss(0, base * 0.15)
-        sleep_time = max(config.CRAWLER_MIN_SLEEP_SEC * 0.5, base + jitter)
+        sleep_time = max(config.CRAWLER_MIN_SLEEP_SEC, base + jitter)
         utils.logger.debug(f"[smart_sleep] Random sleep: {sleep_time:.2f}s (range: {config.CRAWLER_MIN_SLEEP_SEC}-{config.CRAWLER_MAX_SLEEP_SEC}s)")
     else:
         sleep_time = config.CRAWLER_MAX_SLEEP_SEC
