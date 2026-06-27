@@ -31,7 +31,7 @@ from sqlalchemy.orm import Session
 
 from base.base_crawler import AbstractStore
 from database.db_session import get_session
-from database.models import XhsNote, XhsNoteComment, XhsCreator
+from database.models import XhsNote, XhsNoteComment, XhsCreator, XhsNoteKeywordHit
 
 from tools.async_file_writer import AsyncFileWriter
 from tools.time_util import get_current_timestamp
@@ -163,6 +163,50 @@ class XhsDbStoreImplement(AbstractStore):
                 await self.update_content(session, content_item)
             else:
                 await self.add_content(session, content_item)
+
+    async def store_keyword_hit(self, hit_item: Dict):
+        note_id = hit_item.get("note_id")
+        keyword = hit_item.get("keyword")
+        if not note_id or not keyword:
+            return
+
+        task_id = hit_item.get("task_id") or ""
+        now_ts = int(get_current_timestamp())
+        async with get_session() as session:
+            stmt = select(XhsNoteKeywordHit).where(
+                XhsNoteKeywordHit.note_id == note_id,
+                XhsNoteKeywordHit.keyword == keyword,
+                XhsNoteKeywordHit.task_id == task_id,
+            )
+            result = await session.execute(stmt)
+            existing_hit = result.scalar_one_or_none()
+            if existing_hit:
+                update_stmt = (
+                    update(XhsNoteKeywordHit)
+                    .where(XhsNoteKeywordHit.id == existing_hit.id)
+                    .values(
+                        search_page=int(hit_item.get("search_page") or 0),
+                        rank_in_page=int(hit_item.get("rank_in_page") or 0),
+                        last_seen_ts=now_ts,
+                        hit_count=(existing_hit.hit_count or 0) + 1,
+                    )
+                )
+                await session.execute(update_stmt)
+                return
+
+            session.add(
+                XhsNoteKeywordHit(
+                    note_id=note_id,
+                    keyword=keyword,
+                    task_id=task_id,
+                    platform=hit_item.get("platform") or "xhs",
+                    search_page=int(hit_item.get("search_page") or 0),
+                    rank_in_page=int(hit_item.get("rank_in_page") or 0),
+                    first_seen_ts=now_ts,
+                    last_seen_ts=now_ts,
+                    hit_count=1,
+                )
+            )
 
     async def add_content(self, session: AsyncSession, content_item: Dict):
         add_ts = int(get_current_timestamp())

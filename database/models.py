@@ -16,7 +16,7 @@
 # 详细许可条款请参阅项目根目录下的LICENSE文件。
 # 使用本代码即表示您同意遵守上述原则和LICENSE中的所有条款。
 
-from sqlalchemy import create_engine, Column, Integer, Text, String, BigInteger
+from sqlalchemy import create_engine, Column, Integer, Text, String, BigInteger, UniqueConstraint
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
@@ -308,6 +308,22 @@ class XhsNote(Base):
     source_keyword = Column(Text, default='', comment='来源关键词')
     xsec_token = Column(Text, comment='Xsec Token')
     raw_data = Column(Text, comment='API原始响应JSON')
+
+class XhsNoteKeywordHit(Base):
+    __tablename__ = 'xhs_note_keyword_hit'
+    __table_args__ = (
+        UniqueConstraint('note_id', 'keyword', 'task_id', name='uq_xhs_note_keyword_hit_note_keyword_task'),
+    )
+    id = Column(Integer, primary_key=True, comment='主键ID')
+    note_id = Column(String(255), nullable=False, index=True, comment='笔记ID')
+    keyword = Column(String(255), nullable=False, index=True, comment='命中关键词')
+    task_id = Column(String(255), nullable=False, default='', index=True, comment='抓取任务ID')
+    platform = Column(String(32), nullable=False, default='xhs', comment='平台')
+    search_page = Column(Integer, default=0, comment='最近命中搜索页码')
+    rank_in_page = Column(Integer, default=0, comment='最近命中页内排序')
+    first_seen_ts = Column(BigInteger, comment='首次命中时间戳')
+    last_seen_ts = Column(BigInteger, comment='最近命中时间戳')
+    hit_count = Column(Integer, default=1, comment='命中次数')
 
 class XhsNoteComment(Base):
     __tablename__ = 'xhs_note_comment'

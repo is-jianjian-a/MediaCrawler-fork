@@ -38,25 +38,52 @@ def get_cdp_debug_port() -> int:
         return 9222
 
 
+def cdp_websocket_from_active_port(port: int) -> str:
+    candidates = [
+        Path.home() / "Library/Application Support/Google/Chrome/DevToolsActivePort",
+        Path.home() / "Library/Application Support/Google/Chrome/Default/DevToolsActivePort",
+        MEDIACRAWLER_ROOT / "browser_data" / "chrome-cdp-debug" / "DevToolsActivePort",
+        MEDIACRAWLER_ROOT / "browser_data" / f"chrome-cdp-debug-{port}" / "DevToolsActivePort",
+    ]
+    for candidate in candidates:
+        try:
+            if not candidate.exists():
+                continue
+            lines = candidate.read_text(encoding="utf-8", errors="replace").splitlines()
+            if len(lines) < 2:
+                continue
+            active_port = int(lines[0].strip())
+            browser_path = lines[1].strip()
+            if active_port == port and browser_path.startswith("/devtools/browser/"):
+                return f"ws://127.0.0.1:{active_port}{browser_path}"
+        except Exception:
+            continue
+    return ""
+
+
 def check_cdp_remote_debugging(port: int = None, timeout: float = 2.0) -> tuple[bool, str]:
     """Check whether Chrome remote debugging is enabled and reachable."""
     port = port or get_cdp_debug_port()
     url = f"http://127.0.0.1:{port}/json/version"
+    browser = ""
+    web_socket = ""
     try:
         with urllib.request.urlopen(url, timeout=timeout) as response:
             if response.status != 200:
                 return False, f"CDP endpoint returned HTTP {response.status}: {url}"
             data = json.loads(response.read().decode("utf-8", errors="replace") or "{}")
+            browser = data.get("Browser", "")
+            web_socket = data.get("webSocketDebuggerUrl", "")
     except urllib.error.URLError as exc:
-        return False, (
-            f"CDP remote debugging is not reachable on port {port}. "
-            "Open Chrome, enable chrome://inspect/#remote-debugging, "
-            f"or start Chrome with --remote-debugging-port={port}. Detail: {exc}"
-        )
+        web_socket = cdp_websocket_from_active_port(port)
+        if not web_socket:
+            return False, (
+                f"CDP remote debugging is not reachable on port {port}. "
+                "Open Chrome, enable chrome://inspect/#remote-debugging, "
+                f"or start Chrome with --remote-debugging-port={port}. Detail: {exc}"
+            )
     except Exception as exc:
         return False, f"CDP check failed on port {port}: {exc}"
-    browser = data.get("Browser", "")
-    web_socket = data.get("webSocketDebuggerUrl", "")
     if not browser and not web_socket:
         return False, f"CDP endpoint on port {port} responded but did not look like Chrome DevTools."
 
@@ -65,8 +92,8 @@ def check_cdp_remote_debugging(port: int = None, timeout: float = 2.0) -> tuple[
 
         async with async_playwright() as playwright:
             await playwright.chromium.connect_over_cdp(
-                f"http://127.0.0.1:{port}",
-                timeout=timeout * 1000,
+                web_socket or f"http://127.0.0.1:{port}",
+                timeout=max(timeout, 10.0) * 1000,
             )
 
     try:
@@ -221,11 +248,14 @@ class CommentTaskExecutor:
         return success
 
     def crawler_environment(self) -> Dict[str, str]:
-        """Prefer an existing Chrome CDP session for background tasks."""
+        """Use standard browser mode for background tasks.
+
+        CDP can still be enabled explicitly with MEDIACRAWLER_ENABLE_CDP=true,
+        but dashboard tasks should not block on CDP availability.
+        """
         env = os.environ.copy()
-        env["MEDIACRAWLER_ENABLE_CDP"] = "true"
-        env["MEDIACRAWLER_CDP_CONNECT_EXISTING"] = "true"
-        env["MEDIACRAWLER_REQUIRE_CDP"] = "true"
+        env.setdefault("MEDIACRAWLER_ENABLE_CDP", "false")
+        env.setdefault("MEDIACRAWLER_REQUIRE_CDP", "false")
         env.setdefault("MEDIACRAWLER_CDP_DEBUG_PORT", str(get_cdp_debug_port()))
         default_chrome = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
         if os.path.exists(default_chrome):
@@ -273,10 +303,11 @@ def main() -> int:
     if args.batch_size < 1 or args.max_comments < 1 or args.max_sub_comments < 0:
         parser.error("batch-size and max-comments must be positive")
 
-    cdp_ok, cdp_message = check_cdp_remote_debugging()
-    if not cdp_ok:
-        parser.error(cdp_message)
-    print(f"[cdp] {cdp_message}")
+    if os.getenv("MEDIACRAWLER_ENABLE_CDP", "false").lower() in ("1", "true", "yes"):
+        cdp_ok, cdp_message = check_cdp_remote_debugging()
+        if not cdp_ok and os.getenv("MEDIACRAWLER_REQUIRE_CDP", "false").lower() in ("1", "true", "yes"):
+            parser.error(cdp_message)
+        print(f"[cdp] {cdp_message}")
 
     posts = get_task_posts(args.task_id, status="failed" if args.retry_failed else "pending")
     if args.limit:
@@ -336,8 +367,7 @@ def main() -> int:
     finally:
         executor.close()
 
-    if not args.dry_run:
-        finish_task(args.task_id)
+    finish_task(args.task_id)
     print(f"Task {args.task_id} {'finished' if all_ok else 'finished with errors'}; log={log_path}")
     return 130 if interrupted else (0 if all_ok else 1)
 

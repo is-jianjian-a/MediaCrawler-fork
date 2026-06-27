@@ -116,12 +116,30 @@ def get_crawler_stats(db_conn: sqlite3.Connection, keywords: list) -> dict:
         "rawdata_empty_rate": "0%",
         "active_keyword": "",
         "last_crawl_ts": 0,
+        "global_last_crawl_ts": 0,
         "keyword_details": {kw: {"post_count": 0, "comment_count": 0, "status": "等待"} for kw in keywords},
     }
+    cur = db_conn.cursor()
+
+    # Health should reflect crawler activity in the whole DB, not only the
+    # currently selected dashboard keyword group. Otherwise running a different
+    # keyword set can be incorrectly shown as stalled/faulty.
+    cur.execute(
+        """
+        SELECT MAX(ts) FROM (
+            SELECT MAX(add_ts) AS ts FROM xhs_note
+            UNION ALL
+            SELECT MAX(add_ts) AS ts FROM xhs_note_comment
+        )
+        """
+    )
+    row = cur.fetchone()
+    stats["global_last_crawl_ts"] = row[0] if row and row[0] else 0
+
     if not keywords:
+        stats["last_crawl_ts"] = stats["global_last_crawl_ts"]
         return stats
 
-    cur = db_conn.cursor()
     ph = _kw_placeholders(keywords)
 
     # 1. Max timestamps

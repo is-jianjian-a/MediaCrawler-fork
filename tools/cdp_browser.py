@@ -24,6 +24,7 @@ import socket
 import httpx
 import signal
 import atexit
+from pathlib import Path
 from typing import Optional, Dict, Any
 from playwright.async_api import Browser, BrowserContext, Playwright
 
@@ -164,6 +165,19 @@ class CDPBrowserManager:
         utils.logger.info(
             f"[CDPBrowserManager] Waiting up to {timeout}s for browser CDP connection..."
         )
+
+        # If the port is already open but /json/version is not a valid DevTools
+        # endpoint, it is usually a normal Chrome instance or Chrome's
+        # non-Playwright-compatible remote-debugging toggle occupying the port.
+        # Waiting 60s will not fix that; fail fast and let the crawler fallback
+        # to standard browser mode unless REQUIRE_CDP_MODE is enabled by caller.
+        if self._is_port_open(self.debug_port):
+            if not await self._test_cdp_connection(self.debug_port):
+                raise RuntimeError(
+                    f"Port {self.debug_port} is open, but it is not a valid Chrome DevTools "
+                    "CDP endpoint (/json/version is unavailable)."
+                )
+
         connected = False
         for i in range(timeout):
             if await self._test_cdp_connection(self.debug_port):
@@ -194,6 +208,15 @@ class CDPBrowserManager:
 
         utils.logger.info("[CDPBrowserManager] Successfully connected to existing browser")
         return browser_context
+
+    @staticmethod
+    def _is_port_open(debug_port: int) -> bool:
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.settimeout(0.5)
+                return sock.connect_ex(("127.0.0.1", debug_port)) == 0
+        except Exception:
+            return False
 
     async def _get_browser_path(self) -> str:
         """
@@ -281,10 +304,11 @@ class CDPBrowserManager:
         """
         Get browser WebSocket connection URL
         """
+        last_error = None
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.get(
-                    f"http://localhost:{debug_port}/json/version", timeout=10
+                    f"http://127.0.0.1:{debug_port}/json/version", timeout=10
                 )
                 if response.status_code == 200:
                     data = response.json()
@@ -299,8 +323,54 @@ class CDPBrowserManager:
                 else:
                     raise RuntimeError(f"HTTP {response.status_code}: {response.text}")
         except Exception as e:
-            utils.logger.error(f"[CDPBrowserManager] Failed to get WebSocket URL: {e}")
-            raise
+            last_error = e
+            utils.logger.warning(
+                f"[CDPBrowserManager] Failed to get WebSocket URL from /json/version: {e}"
+            )
+
+        ws_url = self._get_browser_websocket_url_from_active_port(debug_port)
+        if ws_url:
+            utils.logger.info(
+                f"[CDPBrowserManager] Got browser WebSocket URL from DevToolsActivePort: {ws_url}"
+            )
+            return ws_url
+
+        utils.logger.error(f"[CDPBrowserManager] Failed to get WebSocket URL: {last_error}")
+        raise last_error or RuntimeError("Failed to get browser WebSocket URL")
+
+    def _get_browser_websocket_url_from_active_port(self, debug_port: int) -> Optional[str]:
+        """Read Chrome's DevToolsActivePort file.
+
+        Newer Chrome's chrome://inspect/#remote-debugging toggle may open the
+        browser-level WebSocket and write DevToolsActivePort, but not expose the
+        traditional /json/version HTTP discovery endpoint.
+        """
+        candidates = []
+        if config.CUSTOM_BROWSER_PATH:
+            candidates.append(Path(config.CUSTOM_BROWSER_PATH).parent / "DevToolsActivePort")
+        candidates.extend([
+            Path.home() / "Library/Application Support/Google/Chrome/DevToolsActivePort",
+            Path.home() / "Library/Application Support/Google/Chrome/Default/DevToolsActivePort",
+            Path(os.getcwd()) / "browser_data" / (config.USER_DATA_DIR % config.PLATFORM) / "DevToolsActivePort",
+            Path(os.getcwd()) / "browser_data" / f"cdp_{config.USER_DATA_DIR % config.PLATFORM}" / "DevToolsActivePort",
+        ])
+        for candidate in candidates:
+            try:
+                if not candidate.exists():
+                    continue
+                lines = candidate.read_text(encoding="utf-8", errors="replace").splitlines()
+                if len(lines) < 2:
+                    continue
+                port = int(lines[0].strip())
+                browser_path = lines[1].strip()
+                if port != debug_port or not browser_path.startswith("/devtools/browser/"):
+                    continue
+                return f"ws://127.0.0.1:{port}{browser_path}"
+            except Exception as exc:
+                utils.logger.debug(
+                    f"[CDPBrowserManager] Failed reading DevToolsActivePort {candidate}: {exc}"
+                )
+        return None
 
     async def _connect_via_cdp(self, playwright: Playwright):
         """

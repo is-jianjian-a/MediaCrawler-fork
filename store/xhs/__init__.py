@@ -41,6 +41,38 @@ from ._store_impl import (
 )
 
 
+async def record_xhs_note_keyword_hit(
+    note_id: str,
+    keyword: str,
+    task_id: str = "",
+    search_page: int = 0,
+    rank_in_page: int = 0,
+):
+    """Record that a note appeared under a search keyword.
+
+    This keeps a many-to-many history separate from xhs_note.source_keyword,
+    so one note can be analyzed across every keyword that matched it.
+    """
+    if not note_id or not keyword:
+        return
+
+    store = XhsStoreFactory.create_store()
+    store_keyword_hit = getattr(store, "store_keyword_hit", None)
+    if not store_keyword_hit:
+        return
+
+    await store_keyword_hit(
+        {
+            "note_id": note_id,
+            "keyword": keyword,
+            "task_id": task_id or "",
+            "platform": "xhs",
+            "search_page": search_page,
+            "rank_in_page": rank_in_page,
+        }
+    )
+
+
 def normalize_image_list(image_list: List[Dict]) -> List[Dict]:
     """Normalize image list by setting url from url_default if available.
 

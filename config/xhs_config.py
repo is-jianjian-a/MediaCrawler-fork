@@ -20,13 +20,9 @@
 
 # Xiaohongshu platform configuration
 
-# Sorting method, the specific enumeration value is in media_platform/xhs/field.py
-# general = 默认/综合排序, popularity_descending = 最热排序, time_descending = 最新排序
-SORT_TYPE = "general"
-
-# Note type filter, the specific enumeration value is in media_platform/xhs/field.py
-# all = 全部(图文+视频), video = 仅视频, image = 仅图文
-NOTE_TYPE = "image"
+# Search sort/type controls live in config/base_config.py:
+#   SORT_TYPE = "time_descending"  # 最新
+#   NOTE_TYPE = "image"            # 仅图文
 
 # Specify the note URL list, which must carry the xsec_token parameter
 XHS_SPECIFIED_NOTE_URL_LIST = [

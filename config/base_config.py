@@ -25,33 +25,54 @@ PLATFORM = "xhs"  # Platform, xhs | dy | ks | bili | wb | tieba | zhihu
 # 开启后 API 走 webapi.rednote.com，cookie 域使用 .rednote.com
 XHS_INTERNATIONAL = False
 
-KEYWORDS = ""  # Keyword search configuration, separated by English commas
+KEYWORDS = os.getenv("MEDIACRAWLER_KEYWORDS", "华为和苹果卡顿对比,华为和苹果性能对比,华为和苹果流畅度对比,华为和苹果稳定性对比,华为和苹果丝滑对比,华为稳定,华为丝滑,苹果丝滑,华为性能,苹果稳定,华为卡顿,苹果性能,苹果流畅,苹果卡顿,华为流畅")  # Keyword search configuration, separated by English commas
 LOGIN_TYPE = "qrcode"  # qrcode or phone or cookie
 COOKIES = ""
 CRAWLER_TYPE = (
     "search"  # Crawling type, search (keyword search) | detail (post details) | creator (creator homepage data)
 )
 
+# ==================== Xiaohongshu search controls ====================
+# Sorting method, the specific enumeration value is in media_platform/xhs/field.py
+# general = 默认/综合排序, popularity_descending = 最热排序, time_descending = 最新排序
+SORT_TYPE = os.getenv("MEDIACRAWLER_XHS_SORT_TYPE", "time_descending")
+
+# Note type filter, the specific enumeration value is in media_platform/xhs/field.py
+# all = 全部(图文+视频), video = 仅视频, image = 仅图文
+NOTE_TYPE = os.getenv("MEDIACRAWLER_XHS_NOTE_TYPE", "image")
+
+# 只入库该日期之后发布的小红书笔记。为空表示不过滤。
+# 支持格式：YYYY-MM-DD 或 YYYY-MM-DD HH:MM:SS；按本地时区解释。
+XHS_NOTE_PUBLISH_DATE_AFTER = os.getenv("MEDIACRAWLER_XHS_NOTE_PUBLISH_DATE_AFTER", "2026-06-10")
+
+# 最新排序从新到旧抓取时，遇到早于 XHS_NOTE_PUBLISH_DATE_AFTER 的笔记后停止当前关键词。
+# 适用于“抓到某日期为止”的任务；关闭时只过滤入库，不提前停止。
+XHS_STOP_WHEN_BEFORE_DATE = os.getenv("MEDIACRAWLER_XHS_STOP_WHEN_BEFORE_DATE", "false").lower() in ("1", "true", "yes")
+
+# 从新到旧搜索时的“搜索到的帖子数”安全上限。
+# 0 表示不按数量限制，继续翻页直到日期下限、has_more=false 或其他异常停止条件。
+XHS_SEARCH_MAX_ITEMS = int(os.getenv("MEDIACRAWLER_XHS_SEARCH_MAX_ITEMS", "0"))
+
 # 控制爬取的帖子/视频数量
-CRAWLER_MAX_NOTES_COUNT = 100
+CRAWLER_MAX_NOTES_COUNT = int(os.getenv("MEDIACRAWLER_CRAWLER_MAX_NOTES_COUNT", "20"))
 # Whether to enable comment crawling mode. Comment crawling is enabled by default.
-ENABLE_GET_COMMENTS = True
+ENABLE_GET_COMMENTS = os.getenv("MEDIACRAWLER_ENABLE_GET_COMMENTS", "true").lower() in ("1", "true", "yes")
 # Control the number of crawled first-level comments (single video/post)
-CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES = 200
+CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES = int(os.getenv("MEDIACRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES", "10"))
 # Maximum total second-level comments scanned per post. This is independent
 # from the first-level limit above.
-CRAWLER_MAX_SUB_COMMENTS_COUNT_SINGLENOTES = 200
+CRAWLER_MAX_SUB_COMMENTS_COUNT_SINGLENOTES = int(os.getenv("MEDIACRAWLER_MAX_SUB_COMMENTS_COUNT_SINGLENOTES", "10"))
 # Whether to enable the mode of crawling second-level comments. By default, crawling of second-level comments is not enabled.
 # If the old version of the project uses db, you need to refer to schema/tables.sql line 287 to add table fields.
-ENABLE_GET_SUB_COMMENTS = True
+ENABLE_GET_SUB_COMMENTS = os.getenv("MEDIACRAWLER_ENABLE_GET_SUB_COMMENTS", "true").lower() in ("1", "true", "yes")
 
 # Crawl interval
 # 是否启用随机睡眠间隔
-ENABLE_RANDOM_SLEEP = True
+ENABLE_RANDOM_SLEEP = os.getenv("MEDIACRAWLER_ENABLE_RANDOM_SLEEP", "true").lower() in ("1", "true", "yes")
 # 随机睡眠的最小时间（秒）
-CRAWLER_MIN_SLEEP_SEC = 20
+CRAWLER_MIN_SLEEP_SEC = int(os.getenv("MEDIACRAWLER_CRAWLER_MIN_SLEEP_SEC", "20"))
 # 随机睡眠的最大时间（秒）
-CRAWLER_MAX_SLEEP_SEC = 40
+CRAWLER_MAX_SLEEP_SEC = int(os.getenv("MEDIACRAWLER_CRAWLER_MAX_SLEEP_SEC", "40"))
 
 # Whether to enable IP proxy
 ENABLE_IP_PROXY = False
@@ -73,7 +94,7 @@ SAVE_LOGIN_STATE = True
 # 是否启用 CDP 模式 - 使用用户本地的 Chrome/Edge 浏览器进行爬取，具有更好的反检测能力
 # 开启后，会自动检测并启动用户的 Chrome/Edge 浏览器，通过 CDP 协议进行控制
 # 该方式使用真实浏览器环境，包括用户的扩展、Cookie 和设置，大幅降低被风控检测的风险
-ENABLE_CDP_MODE = os.getenv("MEDIACRAWLER_ENABLE_CDP", "true").lower() in ("1", "true", "yes")
+ENABLE_CDP_MODE = os.getenv("MEDIACRAWLER_ENABLE_CDP", "false").lower() in ("1", "true", "yes")
 
 # CDP 调试端口，用于与浏览器通信
 # 如果端口被占用，系统会自动尝试下一个可用端口
@@ -130,12 +151,17 @@ USER_DATA_DIR = os.getenv(
 # The number of pages to start crawling starts from the first page by default
 START_PAGE = 1
 
-# 是否启用智能增量抓取（先检查数据库已有数量，差多少抓多少）
+# 是否启用智能增量抓取（先检查数据库已有数量）
 # 仅在 SAVE_DATA_OPTION 为 db/sqlite/postgres 时生效
 ENABLE_SMART_CRAWLER = True
 
+# 智能抓取数量模式：
+# total = CRAWLER_MAX_NOTES_COUNT 表示每个关键词库内目标总量，已有数量达到后跳过
+# incremental = CRAWLER_MAX_NOTES_COUNT 表示每次运行在已有基础上新增的数量
+SMART_CRAWLER_COUNT_MODE = os.getenv("MEDIACRAWLER_SMART_CRAWLER_COUNT_MODE", "incremental")
+
 # 控制并发爬虫数量
-MAX_CONCURRENCY_NUM = 1
+MAX_CONCURRENCY_NUM = int(os.getenv("MEDIACRAWLER_MAX_CONCURRENCY_NUM", "1"))
 
 # Whether to enable crawling media mode (including image or video resources), crawling media is not enabled by default
 ENABLE_GET_MEDIAS = False

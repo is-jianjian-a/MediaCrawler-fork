@@ -247,7 +247,9 @@ def is_db_storage(db_type: str) -> bool:
     return db_type in ["db", "sqlite", "postgres"]
 
 
-async def check_and_adjust_crawler_count(store, keyword: str, max_count: int) -> Tuple[int, Set[str], Set[str]]:
+async def check_and_adjust_crawler_count(
+    store, keyword: str, max_count: int, count_mode: str = "total"
+) -> Tuple[int, Set[str], Set[str]]:
     """
     Check database for existing notes and calculate how many new notes need to be crawled.
     
@@ -255,6 +257,9 @@ async def check_and_adjust_crawler_count(store, keyword: str, max_count: int) ->
         store: Store instance with get_note_count_by_keyword, get_all_note_ids_by_keyword and get_all_existing_ids methods
         keyword: Search keyword
         max_count: Maximum number of notes to crawl (from CRAWLER_MAX_NOTES_COUNT)
+        count_mode:
+            - total: max_count is the target total count per keyword
+            - incremental: max_count is the target new count for this run per keyword
     
     Returns:
         Tuple of (adjusted_count, keyword_existing_ids, global_existing_ids)
@@ -266,6 +271,15 @@ async def check_and_adjust_crawler_count(store, keyword: str, max_count: int) ->
         existing_count = await store.get_note_count_by_keyword(keyword)
         keyword_existing_ids = await store.get_all_note_ids_by_keyword(keyword)
         global_existing_ids = await store.get_all_existing_ids()
+
+        normalized_mode = (count_mode or "total").lower()
+        if normalized_mode == "incremental":
+            utils.logger.info(
+                f"[check_and_adjust_crawler_count] Keyword '{keyword}': "
+                f"has {existing_count} existing notes, incremental mode will crawl {max_count} new notes. "
+                f"Global dedup pool size: {len(global_existing_ids)}"
+            )
+            return max_count, keyword_existing_ids, global_existing_ids
         
         if existing_count >= max_count:
             utils.logger.info(
@@ -600,4 +614,3 @@ def generate_html_report(items: list, platform: str, keyword: str, output_path: 
     print(f"\n🎉 测试报告已生成: {output_path}")
     print(f"📊 抓取数量: {len(items)}，展示数量: {max_items}")
     print(f"🌐 请用浏览器打开查看\n")
-

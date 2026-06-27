@@ -21,6 +21,7 @@ import asyncio
 import os
 import random
 from asyncio import Task
+from datetime import datetime
 from typing import Dict, List, Optional, Set
 
 from playwright.async_api import (
@@ -40,7 +41,7 @@ from store import xhs as xhs_store
 from tools import utils
 from tools.crawler_util import check_and_adjust_crawler_count, is_db_storage, smart_sleep
 from tools.cdp_browser import CDPBrowserManager
-from var import crawler_type_var, source_keyword_var
+from var import crawler_type_var, source_keyword_var, task_id_var
 
 from .client import XiaoHongShuClient
 from .exception import DataFetchError, LoginError, NoteNotFoundError
@@ -117,6 +118,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
                     return
 
             crawler_type_var.set(config.CRAWLER_TYPE)
+            task_id_var.set(os.getenv("MEDIACRAWLER_TASK_ID", ""))
             if config.CRAWLER_TYPE == "search":
                 # Search for notes and retrieve their comment information.
                 await self.search()
@@ -141,7 +143,10 @@ class XiaoHongShuCrawler(AbstractCrawler):
         if config.ENABLE_SMART_CRAWLER and is_db_storage(config.SAVE_DATA_OPTION) and not config.ENABLE_TEST_MODE:
             store = xhs_store.XhsStoreFactory.create_store()
             adjusted_max_count, _, global_existing_ids = await check_and_adjust_crawler_count(
-                store, keyword, config.CRAWLER_MAX_NOTES_COUNT
+                store,
+                keyword,
+                config.CRAWLER_MAX_NOTES_COUNT,
+                getattr(config, "SMART_CRAWLER_COUNT_MODE", "total"),
             )
             if adjusted_max_count <= 0:
                 utils.logger.info(f"[XiaoHongShuCrawler.search] 关键词'{keyword}'已完全抓取，跳过...")
@@ -162,6 +167,46 @@ class XiaoHongShuCrawler(AbstractCrawler):
             filtered_items.append(post_item)
         return filtered_items
 
+    @staticmethod
+    def _parse_publish_date_after_timestamp() -> int:
+        raw_value = getattr(config, "XHS_NOTE_PUBLISH_DATE_AFTER", "") or ""
+        raw_value = str(raw_value).strip()
+        if not raw_value:
+            return 0
+        formats = ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d")
+        for fmt in formats:
+            try:
+                return int(datetime.strptime(raw_value, fmt).timestamp() * 1000)
+            except ValueError:
+                continue
+        raise ValueError(
+            "XHS_NOTE_PUBLISH_DATE_AFTER must be empty, YYYY-MM-DD, or YYYY-MM-DD HH:MM:SS"
+        )
+
+    def _should_store_note_by_publish_time(self, note_detail: Dict, note_id: str) -> bool:
+        threshold_ms = self._parse_publish_date_after_timestamp()
+        if not threshold_ms:
+            return True
+        publish_time = int(note_detail.get("time") or 0)
+        if publish_time and publish_time < threshold_ms:
+            utils.logger.info(
+                f"[xhs publish filter] skip note_id={note_id} publish_time={publish_time} "
+                f"before XHS_NOTE_PUBLISH_DATE_AFTER={config.XHS_NOTE_PUBLISH_DATE_AFTER}"
+            )
+            return False
+        if not publish_time:
+            utils.logger.warning(
+                f"[xhs publish filter] note_id={note_id} has no publish time; keep storing"
+            )
+        return True
+
+    def _is_note_before_publish_threshold(self, note_detail: Dict) -> bool:
+        threshold_ms = self._parse_publish_date_after_timestamp()
+        if not threshold_ms:
+            return False
+        publish_time = int((note_detail or {}).get("time") or 0)
+        return bool(publish_time and publish_time < threshold_ms)
+
     async def _store_note_detail(self, note_detail: Dict, note_id: str,
                                   existing_ids_set: Set[str], test_mode_items: list,
                                   search_list_fallback: Optional[Dict] = None,
@@ -170,7 +215,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
             # Existing note: skip detail API, keep for comments
             if note_id not in existing_ids_set:
                 existing_ids_set.add(note_id)
-            return True, existing_ids_set, 0, False
+            return True, existing_ids_set, 0, False, False
 
         data_to_store = note_detail
         is_fallback = False
@@ -196,6 +241,9 @@ class XiaoHongShuCrawler(AbstractCrawler):
             utils.logger.warning(f"[search] ⚠️ FALLBACK note_id={note_id} title=\"{note_card.get('display_title', '')[:40]}\" — detail API failed, using search list data (no desc/content)")
 
         if data_to_store:
+            if not self._should_store_note_by_publish_time(data_to_store, data_to_store.get("note_id", note_id)):
+                existing_ids_set.add(data_to_store.get("note_id", note_id))
+                return True, existing_ids_set, 0, is_fallback, True
             try:
                 if config.ENABLE_TEST_MODE:
                     test_mode_items.append(data_to_store)
@@ -203,14 +251,14 @@ class XiaoHongShuCrawler(AbstractCrawler):
                     await xhs_store.update_xhs_note(data_to_store)
                     await self.get_notice_media(data_to_store)
                 existing_ids_set.add(data_to_store.get("note_id", note_id))
-                return True, existing_ids_set, 1, is_fallback
+                return True, existing_ids_set, 1, is_fallback, False
             except Exception as e:
                 utils.logger.error(f"[XiaoHongShuCrawler.search] Failed to store note {data_to_store.get('note_id', note_id)}: {e}")
                 existing_ids_set.add(note_id)
-                return False, existing_ids_set, 0, False
+                return False, existing_ids_set, 0, False, False
         else:
             existing_ids_set.add(note_id)
-            return False, existing_ids_set, 0, False
+            return False, existing_ids_set, 0, False, False
 
     def _log_search_summary(self, keyword: str, stop_reason: str,
                              total_attempted: int, failed_count: int,
@@ -233,7 +281,11 @@ class XiaoHongShuCrawler(AbstractCrawler):
         utils.logger.info(f"  ⛔ Stop reason: {stop_reason}")
         utils.logger.info("=" * 60)
 
-        if actual_new_count < config.CRAWLER_MAX_NOTES_COUNT and stop_reason not in ["Reached target count"]:
+        if (
+            actual_new_count < config.CRAWLER_MAX_NOTES_COUNT
+            and stop_reason not in ["Reached target count"]
+            and "publish date floor" not in stop_reason.lower()
+        ):
             utils.logger.warning("[XiaoHongShuCrawler.search] ⚠️ Did not reach target count! Consider:")
             if "failure" in stop_reason.lower() or "error" in stop_reason.lower():
                 utils.logger.warning("   - Check if your login is still valid")
@@ -279,6 +331,15 @@ class XiaoHongShuCrawler(AbstractCrawler):
             fallback_count = 0
             prev_fallback_count = 0
             total_processed = 0  # Total notes processed (new + existing)
+            total_searched_items = 0  # Search-result notes seen, independent of DB writes
+            reached_publish_date_floor = False
+            search_max_items = max(0, int(getattr(config, "XHS_SEARCH_MAX_ITEMS", 0) or 0))
+            if (
+                getattr(config, "XHS_STOP_WHEN_BEFORE_DATE", False)
+                and getattr(config, "SORT_TYPE", "") == "time_descending"
+                and search_max_items == 0
+            ):
+                max_pages = 1_000_000
 
             while actual_stored_count < adjusted_max_count and page <= max_pages:
                 if page < start_page:
@@ -304,9 +365,19 @@ class XiaoHongShuCrawler(AbstractCrawler):
                     semaphore = asyncio.Semaphore(config.MAX_CONCURRENCY_NUM)
 
                     filtered_items = self._filter_search_items(notes_res.get("items", {}), existing_ids_set)
+                    total_searched_items += len(filtered_items)
                     new_count = sum(1 for item in filtered_items if not item.get("_skip_detail"))
                     exist_count = len(filtered_items) - new_count
-                    utils.logger.info(f"[搜索] 关键词=\"{keyword}\" 第{page}页 | 原始{len(notes_res.get('items', []))}条 过滤后{len(filtered_items)}条(新增{new_count}条+已存在{exist_count}条) | 处理{len(filtered_items)}条帖子")
+                    utils.logger.info(f"[搜索] 关键词=\"{keyword}\" 第{page}页 | 原始{len(notes_res.get('items', []))}条 过滤后{len(filtered_items)}条(新增{new_count}条+已存在{exist_count}条) | 处理{len(filtered_items)}条帖子 | 已搜索{total_searched_items}条")
+
+                    for rank_in_page, post_item in enumerate(filtered_items, start=1):
+                        await xhs_store.record_xhs_note_keyword_hit(
+                            note_id=post_item.get("id"),
+                            keyword=keyword,
+                            task_id=task_id_var.get(),
+                            search_page=page,
+                            rank_in_page=rank_in_page,
+                        )
 
                     if not filtered_items:
                         consecutive_empty_pages += 1
@@ -343,17 +414,25 @@ class XiaoHongShuCrawler(AbstractCrawler):
                         note_id = filtered_items[idx].get("id")
                         skip_detail = filtered_items[idx].get("_skip_detail", False)
                         total_attempted += 1
-                        success, existing_ids_set, stored_delta, is_fallback = await self._store_note_detail(
+                        success, existing_ids_set, stored_delta, is_fallback, is_before_threshold = await self._store_note_detail(
                             note_detail, note_id, existing_ids_set, test_mode_items,
                             search_list_fallback=filtered_items[idx],
                             skip_detail=skip_detail,
                         )
+                        if (
+                            is_before_threshold
+                            and getattr(config, "XHS_STOP_WHEN_BEFORE_DATE", False)
+                            and getattr(config, "SORT_TYPE", "") == "time_descending"
+                        ):
+                            reached_publish_date_floor = True
                         if is_fallback:
                             fallback_count += 1
                         if success:
                             stored_note_id = note_detail.get("note_id") if note_detail else note_id
-                            note_ids.append(stored_note_id)
-                            xsec_tokens.append(filtered_items[idx].get("xsec_token", ""))
+                            should_fetch_comments = skip_detail or stored_delta > 0
+                            if should_fetch_comments:
+                                note_ids.append(stored_note_id)
+                                xsec_tokens.append(filtered_items[idx].get("xsec_token", ""))
                             total_processed += 1  # Count both new and existing notes
                             if not skip_detail:
                                 actual_stored_count += stored_delta
@@ -388,6 +467,26 @@ class XiaoHongShuCrawler(AbstractCrawler):
                     if actual_stored_count >= adjusted_max_count:
                         stop_reason = "Reached target count"
                         utils.logger.info(f"[XiaoHongShuCrawler.search] Reached target count: {config.CRAWLER_MAX_NOTES_COUNT}")
+                        break
+
+                    if reached_publish_date_floor:
+                        stop_reason = (
+                            "Reached publish date floor "
+                            f"({getattr(config, 'XHS_NOTE_PUBLISH_DATE_AFTER', '')})"
+                        )
+                        utils.logger.info(
+                            "[XiaoHongShuCrawler.search] Reached publish date floor, "
+                            "stopping current keyword because SORT_TYPE=time_descending "
+                            "and XHS_STOP_WHEN_BEFORE_DATE=true."
+                        )
+                        break
+
+                    if search_max_items > 0 and total_searched_items >= search_max_items:
+                        stop_reason = f"Reached search item safety limit ({search_max_items})"
+                        utils.logger.info(
+                            f"[XiaoHongShuCrawler.search] Reached search item safety limit: "
+                            f"{total_searched_items}/{search_max_items}. This counts search-result notes, not stored notes."
+                        )
                         break
 
                     if not has_more:
@@ -471,7 +570,9 @@ class XiaoHongShuCrawler(AbstractCrawler):
 
         note_details = await asyncio.gather(*task_list)
         for note_detail in note_details:
-            if note_detail:
+            if note_detail and self._should_store_note_by_publish_time(
+                note_detail, note_detail.get("note_id", "")
+            ):
                 await xhs_store.update_xhs_note(note_detail)
                 await self.get_notice_media(note_detail)
 
@@ -496,7 +597,9 @@ class XiaoHongShuCrawler(AbstractCrawler):
         xsec_tokens = []
         note_details = await asyncio.gather(*get_note_detail_task_list)
         for note_detail in note_details:
-            if note_detail:
+            if note_detail and self._should_store_note_by_publish_time(
+                note_detail, note_detail.get("note_id", "")
+            ):
                 need_get_comment_note_ids.append(note_detail.get("note_id", ""))
                 xsec_tokens.append(note_detail.get("xsec_token", ""))
                 await xhs_store.update_xhs_note(note_detail)
@@ -597,8 +700,11 @@ class XiaoHongShuCrawler(AbstractCrawler):
                 )
                 if note_detail:
                     note_detail.update({"xsec_token": xsec_token, "xsec_source": "pc_search"})
-                    await xhs_store.update_xhs_note(note_detail)
-                    utils.logger.info(f"[comments] refreshed note detail note_id={note_id}")
+                    if self._should_store_note_by_publish_time(note_detail, note_id):
+                        await xhs_store.update_xhs_note(note_detail)
+                        utils.logger.info(f"[comments] refreshed note detail note_id={note_id}")
+                    else:
+                        utils.logger.info(f"[comments] refreshed note detail skipped by publish filter note_id={note_id}")
                 else:
                     utils.logger.warning(f"[comments] note detail refresh returned empty note_id={note_id}")
             except Exception as exc:
@@ -665,6 +771,10 @@ class XiaoHongShuCrawler(AbstractCrawler):
         launch_options = {}
         if config.CUSTOM_BROWSER_PATH:
             launch_options["executable_path"] = config.CUSTOM_BROWSER_PATH
+        else:
+            default_chrome_path = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+            if os.path.exists(default_chrome_path):
+                launch_options["executable_path"] = default_chrome_path
         if config.SAVE_LOGIN_STATE:
             user_data_dir = os.path.join(os.getcwd(), "browser_data", config.USER_DATA_DIR % config.PLATFORM)  # type: ignore
             browser_context = await chromium.launch_persistent_context(

@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>MediaCrawler Dashboard</title>
-<!-- CHARTJS_INLINE -->
+<script src="/static/chart.min.js"></script>
 <style>
 /* ============================================================
    Design System — MediaCrawler Dashboard
@@ -278,18 +278,51 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
 .worth-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 12px 16px; border-bottom: 1px solid var(--hairline); background: var(--surface-2); }
 .worth-count { font-size: 12px; color: var(--text-2); }
 .worth-count b { color: var(--text); }
-.task-composer { display: none; border-bottom: 1px solid var(--hairline); background: linear-gradient(180deg, #fff, var(--surface-2)); padding: 16px; }
-.task-composer.show { display: block; }
-.composer-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
-.composer-title { font-size: 14px; font-weight: 750; letter-spacing: -0.01em; }
-.composer-sub { margin-top: 2px; font-size: 11px; color: var(--text-3); }
-.composer-grid { display: grid; grid-template-columns: 1.4fr repeat(4, minmax(110px, 1fr)); gap: 10px; align-items: end; }
-.field label { display: block; font-size: 10px; font-weight: 700; color: var(--text-3); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 5px; }
-.field .input { width: 100%; }
-.check-field { display: flex; align-items: center; gap: 8px; height: 32px; color: var(--text-2); font-size: 12px; font-weight: 600; }
-.composer-actions { display: flex; justify-content: space-between; gap: 12px; margin-top: 14px; align-items: center; }
-.composer-note { font-size: 11px; color: var(--text-3); }
-@media(max-width:980px){ .composer-grid{ grid-template-columns: repeat(2,1fr); } .composer-grid .field:first-child{ grid-column: 1/-1; } }
+	.task-composer { display: none; border-bottom: 1px solid var(--hairline); background: linear-gradient(180deg, #fff, var(--surface-2)); padding: 16px; }
+	.task-composer.show { display: block; }
+	.composer-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
+	.composer-title { font-size: 14px; font-weight: 750; letter-spacing: -0.01em; }
+	.composer-sub { margin-top: 2px; font-size: 11px; color: var(--text-3); }
+	.composer-band {
+	  border: 1px solid var(--border);
+	  border-radius: var(--r);
+	  background: var(--surface);
+	  padding: 12px;
+	  margin-top: 10px;
+	}
+	.composer-band.more {
+	  background:
+	    linear-gradient(90deg, rgba(139,92,246,.05), transparent 46%),
+	    var(--surface);
+	}
+	.composer-band-title {
+	  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+	  margin-bottom: 10px;
+	}
+	.composer-band-title .title { font-size: 12px; font-weight: 750; color: var(--text); }
+	.composer-band-title .hint { font-size: 11px; color: var(--text-3); font-weight: 500; }
+	.composer-grid { display: grid; grid-template-columns: repeat(4, minmax(130px, 1fr)); gap: 12px; align-items: start; }
+	.composer-grid.common { grid-template-columns: 1.6fr repeat(3, minmax(130px, 1fr)); }
+	.composer-more { display: none; }
+	.composer-more.show { display: block; }
+	.field label { display: block; font-size: 10px; font-weight: 700; color: var(--text-3); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 5px; }
+	.field .input { width: 100%; }
+	.field .select { width: 100%; min-width: 0; }
+	.field-help { margin-top: 5px; font-size: 11px; color: var(--text-3); line-height: 1.45; }
+	.field-help.warn { color: #b45309; }
+	.check-field { display: flex; align-items: center; gap: 8px; height: 32px; color: var(--text-2); font-size: 12px; font-weight: 600; }
+	.switch-field {
+	  min-height: 72px;
+	  border: 1px solid var(--border);
+	  border-radius: var(--r-sm);
+	  background: var(--surface-2);
+	  padding: 9px 10px;
+	}
+	.switch-field label { display:flex; align-items:center; gap:8px; font-size:12px; font-weight:700; color:var(--text); }
+	.composer-actions { display: flex; justify-content: space-between; gap: 12px; margin-top: 14px; align-items: center; }
+	.composer-note { font-size: 11px; color: var(--text-3); }
+	@media(max-width:980px){ .composer-grid,.composer-grid.common{ grid-template-columns: repeat(2,1fr); } .composer-grid .field:first-child{ grid-column: 1/-1; } }
+	@media(max-width:620px){ .composer-grid,.composer-grid.common{ grid-template-columns: 1fr; } }
 
 /* task cards */
 .task-workbench { display: grid; grid-template-columns: minmax(360px, .95fr) 1.35fr; gap: 0; min-height: 380px; }
@@ -325,6 +358,27 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
 .task-log-head { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; border-bottom: 1px solid rgba(255,255,255,.08); font-size: 11px; color: #a1a1aa; }
 .task-log-content { max-height: 220px; overflow-y: auto; overscroll-behavior: contain; padding: 10px 12px; font-family: 'SF Mono', ui-monospace, Menlo, monospace; font-size: 10.5px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
 @media(max-width:980px){ .task-workbench{ grid-template-columns: 1fr; } .task-list{ border-right: none; border-bottom: 1px solid var(--hairline); } .task-detail{ max-height: none; } }
+
+/* keyword crawl task creator */
+.crawl-builder { display: grid; grid-template-columns: minmax(420px, 1fr) 420px; gap: 0; min-height: 560px; }
+.crawl-form { padding: 16px; border-right: 1px solid var(--hairline); }
+.crawl-side { padding: 10px; max-height: 640px; overflow-y: auto; overscroll-behavior: contain; background: var(--surface-2); }
+.keyword-preset-list { display: grid; gap: 10px; }
+.preset-card { border: 1px solid var(--border); border-radius: var(--r); background: var(--surface); padding: 11px 12px; }
+.preset-head { display: flex; justify-content: space-between; gap: 10px; align-items: start; margin-bottom: 8px; }
+.preset-title { font-size: 12px; font-weight: 750; }
+.preset-desc { font-size: 11px; color: var(--text-3); margin-top: 2px; line-height: 1.45; }
+.kw-chip-wrap { display: flex; flex-wrap: wrap; gap: 6px; }
+.kw-chip-btn { border: 1px solid var(--border); background: var(--surface-2); color: var(--text-2); border-radius: 999px; padding: 4px 9px; font: inherit; font-size: 11px; cursor: pointer; transition: all .12s; }
+.kw-chip-btn:hover { border-color: var(--border-strong); color: var(--text); }
+.kw-chip-btn.active { background: var(--brand-soft); border-color: var(--brand-border); color: var(--brand); font-weight: 650; }
+.keyword-textarea { width: 100%; min-height: 112px; resize: vertical; border: 1px solid var(--border); border-radius: var(--r-sm); padding: 9px 10px; font: inherit; font-size: 12px; line-height: 1.55; background: var(--surface); color: var(--text); }
+.keyword-textarea:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-soft); }
+.crawl-summary { font-size: 11px; color: var(--text-3); display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
+.crawl-task-item { padding: 12px; border-radius: var(--r); border: 1px solid transparent; cursor: pointer; background: var(--surface); margin-bottom: 8px; transition: all .12s; }
+.crawl-task-item:hover,.crawl-task-item.active { border-color: var(--border); box-shadow: var(--shadow-xs); }
+.crawl-task-keywords { margin-top: 7px; font-size: 11px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media(max-width:1080px){ .crawl-builder{ grid-template-columns: 1fr; } .crawl-form{ border-right: none; border-bottom: 1px solid var(--hairline); } .crawl-side{ max-height: none; } }
 .empty { padding: 40px 20px; text-align: center; color: var(--text-3); font-size: 12px; }
 .empty .em-ico { width: 38px; height: 38px; margin: 0 auto 10px; border-radius: 50%; background: var(--surface-sunken); display: grid; place-items: center; color: var(--text-4); }
 
@@ -601,9 +655,17 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3z"/></svg>
           值得深挖 <span class="badge" id="worthBadge">0</span>
         </button>
+        <button class="tab" id="tabCrawl" onclick="switchTab('crawl')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 4h18"/><path d="M8 4v16"/><path d="M16 4v16"/><path d="M3 12h18"/><path d="M3 20h18"/></svg>
+          抓帖任务 <span class="badge" id="crawlBadge">0</span>
+        </button>
+        <button class="tab" id="tabFreshCrawl" onclick="switchTab('fresh')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 8v5l3 2"/><circle cx="12" cy="12" r="9"/><path d="M3 3v5h5"/></svg>
+          从新到旧
+        </button>
         <button class="tab" id="tabTask" onclick="switchTab('task')">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
-          任务管理 <span class="badge" id="taskBadge">0</span>
+          评论补抓 <span class="badge" id="taskBadge">0</span>
         </button>
       </div>
 
@@ -629,30 +691,97 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
             </div>
             <button class="btn btn-sm btn-ghost" onclick="closeTaskComposer()">收起</button>
           </div>
-          <div class="composer-grid">
-            <div class="field">
-              <label>任务名称</label>
-              <input class="input" id="taskNameInput" type="text" maxlength="80">
+          <div class="composer-band">
+            <div class="composer-band-title">
+              <div>
+                <div class="title">常用选项</div>
+                <div class="hint">只改这里就能完成大多数补抓任务；创建后仍需到任务管理里手动启动。</div>
+              </div>
             </div>
-            <div class="field">
-              <label>一级评论上限</label>
-              <input class="input" id="taskMaxComments" type="number" min="1" max="500" value="200">
+            <div class="composer-grid common">
+              <div class="field">
+                <label>任务名称</label>
+                <input class="input" id="taskNameInput" type="text" maxlength="80">
+                <div class="field-help">用于任务列表识别，建议包含主题和日期。</div>
+              </div>
+              <div class="field">
+                <label>Batch size</label>
+                <input class="input" id="taskBatchSize" type="number" min="1" max="20" value="5">
+                <div class="field-help">每次打开浏览器处理的帖子数。越大越少开浏览器，但单批失败影响也更大。</div>
+              </div>
+              <div class="field">
+                <label>一级评论上限 / 帖</label>
+                <input class="input" id="taskMaxComments" type="number" min="1" max="500" value="200">
+                <div class="field-help">每篇帖子最多抓取多少条一级评论。</div>
+              </div>
+              <div class="field">
+                <label>二级评论</label>
+                <select class="select" id="taskGetSubComments" onchange="toggleSubCommentConfig()">
+                  <option value="false">不抓二级</option>
+                  <option value="true">抓二级评论</option>
+                </select>
+                <div class="field-help">二级评论能补足讨论脉络，但速度会明显变慢。</div>
+              </div>
             </div>
-            <div class="field">
-              <label>Batch size（每次打开处理帖子数）</label>
-              <input class="input" id="taskBatchSize" type="number" min="5" max="20" value="5">
+          </div>
+
+          <div class="composer-band more" id="taskMorePanel">
+            <div class="composer-band-title">
+              <div>
+                <div class="title">更多选项</div>
+                <div class="hint">用于控制速度、浏览器环境和安全验证；不确定就保持默认。</div>
+              </div>
+              <button class="btn btn-sm" id="taskMoreToggle" onclick="toggleTaskMoreOptions()">展开更多选项</button>
             </div>
-            <div class="field">
-              <label>间隔秒数</label>
-              <input class="input" id="taskDelay" type="number" min="0" max="120" value="5" step="0.5">
-            </div>
-            <label class="check-field">
-              <input type="checkbox" id="taskGetSubComments" onchange="toggleSubCommentConfig()">
-              抓二级评论
-            </label>
-            <div class="field" id="taskSubCommentField" style="display:none">
-              <label>二级评论上限</label>
-              <input class="input" id="taskMaxSubComments" type="number" min="1" max="1000" value="200">
+            <div class="composer-more" id="taskMoreOptions">
+              <div class="composer-grid">
+                <div class="field" id="taskSubCommentField" style="display:none">
+                  <label>二级评论上限 / 帖</label>
+                  <input class="input" id="taskMaxSubComments" type="number" min="0" max="1000" value="200">
+                  <div class="field-help">开启二级评论后生效；0 表示不额外展开二级。</div>
+                </div>
+                <div class="field">
+                  <label>批次间隔秒数</label>
+                  <input class="input" id="taskDelay" type="number" min="0" max="120" value="5" step="0.5">
+                  <div class="field-help">每个 batch 完成后的等待时间，用于降速和降低风控。</div>
+                </div>
+                <div class="field">
+                  <label>仅处理前 N 条</label>
+                  <input class="input" id="taskLimit" type="number" min="0" max="100" value="0">
+                  <div class="field-help">0 表示处理任务内全部待处理帖子；测试时可填 1-5。</div>
+                </div>
+                <div class="field">
+                  <label>浏览器 Profile</label>
+                  <input class="input" id="taskUserDataDir" type="text" value="%s_user_data_dir_account02">
+                  <div class="field-help">对应 browser_data 下的用户数据目录模板；影响登录态隔离。</div>
+                </div>
+                <div class="switch-field">
+                  <label><input type="checkbox" id="taskDryRun"> Dry run</label>
+                  <div class="field-help">只生成命令和任务日志，不真正启动爬虫；适合检查配置。</div>
+                </div>
+                <div class="field">
+                  <label>浏览器通信模式</label>
+                  <select class="select" id="taskBrowserMode">
+                    <option value="standard">标准模式（默认）</option>
+                    <option value="cdp_optional">CDP 可用则用</option>
+                    <option value="cdp_required">必须 CDP</option>
+                  </select>
+                  <div class="field-help">标准模式最省心；必须 CDP 时如果连接不上会启动失败。</div>
+                </div>
+                <div class="field">
+                  <label>CDP 端口</label>
+                  <input class="input" id="taskCdpPort" type="number" min="1" max="65535" value="9222">
+                  <div class="field-help">仅 CDP 模式使用，默认读取 Chrome remote debugging 端口。</div>
+                </div>
+                <div class="field">
+                  <label>启动后动作</label>
+                  <select class="select" id="taskStartMode">
+                    <option value="manual">只创建，手动启动</option>
+                    <option value="auto">创建后立即启动</option>
+                  </select>
+                  <div class="field-help warn">自动启动会立刻创建后台 worker；确认当前没有冲突任务再用。</div>
+                </div>
+              </div>
             </div>
           </div>
           <div class="composer-actions">
@@ -678,6 +807,228 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
               <tr><td colspan="7" class="empty"><div class="em-ico"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg></div>点击「加载高价值帖子」开始</td></tr>
             </tbody>
           </table>
+        </div>
+      </div>
+
+      <!-- crawl panel -->
+      <div class="tab-panel" id="panelCrawl">
+        <div class="worth-toolbar">
+          <button class="btn btn-sm" onclick="loadCrawlPresets()">刷新关键词组</button>
+          <button class="btn btn-sm" onclick="loadCrawlTasks()">刷新任务列表</button>
+          <span class="worth-count" id="crawlStatus">尚未加载</span>
+          <div class="seg" style="margin-left:auto">
+            <button id="crawlActiveSeg" class="active" onclick="switchCrawlArchiveView(false)">进行中</button>
+            <button id="crawlArchivedSeg" onclick="switchCrawlArchiveView(true)">已归档</button>
+          </div>
+        </div>
+        <div class="crawl-builder">
+          <div class="crawl-form">
+            <div class="composer-head">
+              <div>
+                <div class="composer-title">创建关键词抓帖任务</div>
+                <div class="composer-sub" id="crawlModeSub">按关键词组或手工输入关键词创建搜索任务。默认只创建，不自动启动。</div>
+              </div>
+            </div>
+
+            <div class="composer-band">
+              <div class="composer-band-title">
+                <div>
+                  <div class="title">关键词组</div>
+                  <div class="hint">从已保存的关键词组取默认关键词；右侧文本框仍可手工调整。</div>
+                </div>
+              </div>
+              <div class="composer-grid common">
+                <div class="field">
+                  <label>默认关键词组</label>
+                  <select class="select" id="crawlKeywordGroupSelect" onchange="applyCrawlKeywordGroup()">
+                    <option value="">加载中…</option>
+                  </select>
+                  <div class="field-help">默认使用 Flu-HW：华为/华为手机 × 流畅/性能/卡顿/丝滑/稳定。</div>
+                </div>
+                <div class="field">
+                  <label>组内关键词数</label>
+                  <input class="input" id="crawlKeywordGroupCount" type="text" value="--" disabled>
+                  <div class="field-help">切换组后自动同步到关键词文本框。</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="composer-band">
+              <div class="composer-band-title">
+                <div>
+                  <div class="title">常用选项</div>
+                  <div class="hint" id="crawlCommonHint">当前目标是按最新排序从新到旧抓流畅/卡顿相关帖子，直到触达日期下限或新增数量上限。</div>
+                </div>
+              </div>
+              <div class="composer-grid common">
+                <div class="field">
+                  <label>任务名称</label>
+                  <input class="input" id="crawlTaskName" type="text" maxlength="80" value="fluency-lag-fresh-since-2026-06-10">
+                  <div class="field-help">用于任务列表识别，建议包含主题和日期。</div>
+                </div>
+                <div class="field">
+                  <label>发布日期之后入库</label>
+                  <input class="input" id="crawlDateAfter" type="date" value="2026-06-10">
+                  <div class="field-help">只保存该日期之后发布的小红书笔记。</div>
+                </div>
+                <div class="field">
+                  <label id="crawlMaxCountLabel">每词新增上限</label>
+                  <input class="input" id="crawlMaxCount" type="number" min="0" max="200000" value="0">
+                  <div class="field-help" id="crawlMaxCountHelp">0 表示不按数量限制；N 表示搜索结果达到 N 个帖子就停止。</div>
+                </div>
+                <div class="field">
+                  <label>排序</label>
+                  <select class="select" id="crawlSortType">
+                    <option value="time_descending">最新</option>
+                    <option value="general">综合</option>
+                    <option value="popularity_descending">最热</option>
+                  </select>
+                  <div class="field-help">最新对应小红书 time_descending。</div>
+                </div>
+              </div>
+              <div class="field" style="margin-top:12px">
+                <label>关键词</label>
+                <textarea class="keyword-textarea" id="crawlKeywords" placeholder="每行一个，或用逗号分隔"></textarea>
+                <div class="crawl-summary" id="crawlKeywordSummary">0 个关键词</div>
+              </div>
+              <div class="composer-grid" style="margin-top:12px">
+                <div class="field">
+                  <label>从新到旧策略</label>
+                  <input type="hidden" id="crawlStopCondition" value="date_floor">
+                  <input class="input" type="text" value="抓到日期下限为止" disabled>
+                  <div class="field-help">安全上限为 0 时不按数量限制；大于 0 时按搜索结果帖子数兜底停止。</div>
+                </div>
+                <div class="field">
+                  <label>主题标签</label>
+                  <input class="input" id="crawlTopic" type="text" value="fluency_lag">
+                  <div class="field-help">写入任务配置，方便之后区分流畅/卡顿任务。</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="composer-band more">
+              <div class="composer-band-title">
+                <div>
+                  <div class="title">更多选项</div>
+                  <div class="hint">用于控制类型过滤、评论、速度和浏览器环境；不确定就保持默认。</div>
+                </div>
+                <button class="btn btn-sm" id="crawlMoreToggle" onclick="toggleCrawlMoreOptions()">展开更多选项</button>
+              </div>
+              <div class="composer-more" id="crawlMoreOptions">
+                <div class="composer-grid">
+                  <div class="field">
+                    <label>数量模式</label>
+                    <select class="select" id="crawlCountMode">
+                      <option value="incremental">增量：每次新增 N 条</option>
+                      <option value="total">总量：库内达到 N 条跳过</option>
+                    </select>
+                    <div class="field-help">当前建议用增量模式。</div>
+                  </div>
+                  <div class="field">
+                    <label>内容类型</label>
+                    <select class="select" id="crawlNoteType">
+                      <option value="all">全部</option>
+                      <option value="video">仅视频</option>
+                      <option value="image">仅图文</option>
+                    </select>
+                    <div class="field-help">需求探索建议先用全部，再按内容类型复盘。</div>
+                  </div>
+                  <div class="field">
+                    <label>一级评论</label>
+                    <select class="select" id="crawlGetComments" onchange="toggleCrawlCommentConfig()">
+                      <option value="false">不抓评论</option>
+                      <option value="true">抓一级评论</option>
+                    </select>
+                    <div class="field-help">抓帖任务建议先不抓评论，后续用高价值筛选补抓。</div>
+                  </div>
+                  <div class="field">
+                    <label>一级评论上限 / 帖</label>
+                    <input class="input" id="crawlMaxComments" type="number" min="0" max="500" value="10">
+                    <div class="field-help">开启评论后生效。</div>
+                  </div>
+                  <div class="field">
+                    <label>二级评论</label>
+                    <select class="select" id="crawlGetSubComments">
+                      <option value="false">不抓二级</option>
+                      <option value="true">抓二级评论</option>
+                    </select>
+                    <div class="field-help">会显著降低速度，不建议抓帖首轮开启。</div>
+                  </div>
+                  <div class="field">
+                    <label>二级评论上限 / 帖</label>
+                    <input class="input" id="crawlMaxSubComments" type="number" min="0" max="1000" value="10">
+                    <div class="field-help">开启二级评论后生效。</div>
+                  </div>
+                  <div class="field">
+                    <label>并发数</label>
+                    <input class="input" id="crawlMaxConcurrency" type="number" min="1" max="5" value="1">
+                    <div class="field-help">小红书建议保持 1，稳定优先。</div>
+                  </div>
+                  <div class="field">
+                    <label>随机睡眠</label>
+                    <select class="select" id="crawlRandomSleep">
+                      <option value="true">启用</option>
+                      <option value="false">关闭</option>
+                    </select>
+                    <div class="field-help">启用可降低请求节奏规律性。</div>
+                  </div>
+                  <div class="field">
+                    <label>最小睡眠秒</label>
+                    <input class="input" id="crawlMinSleep" type="number" min="0" max="300" value="20">
+                    <div class="field-help">每轮操作随机等待下限。</div>
+                  </div>
+                  <div class="field">
+                    <label>最大睡眠秒</label>
+                    <input class="input" id="crawlMaxSleep" type="number" min="0" max="600" value="40">
+                    <div class="field-help">每轮操作随机等待上限。</div>
+                  </div>
+                  <div class="field">
+                    <label>浏览器 Profile</label>
+                    <input class="input" id="crawlUserDataDir" type="text" value="%s_user_data_dir_account02">
+                    <div class="field-help">影响登录态隔离。</div>
+                  </div>
+                  <div class="field">
+                    <label>浏览器模式</label>
+                    <select class="select" id="crawlBrowserMode">
+                      <option value="standard">标准模式</option>
+                      <option value="cdp_optional">CDP 可用则用</option>
+                      <option value="cdp_required">必须 CDP</option>
+                    </select>
+                    <div class="field-help">你前面要求不强判 CDP，默认标准模式。</div>
+                  </div>
+                  <div class="field">
+                    <label>CDP 端口</label>
+                    <input class="input" id="crawlCdpPort" type="number" min="1" max="65535" value="9222">
+                    <div class="field-help">仅 CDP 模式使用。</div>
+                  </div>
+                  <div class="switch-field">
+                    <label><input type="checkbox" id="crawlDryRun"> Dry run</label>
+                    <div class="field-help">只生成任务日志，不真正启动爬虫。</div>
+                  </div>
+                  <div class="field">
+                    <label>启动后动作</label>
+                    <select class="select" id="crawlStartMode">
+                      <option value="manual">只创建，手动启动</option>
+                      <option value="auto">创建后立即启动</option>
+                    </select>
+                    <div class="field-help warn">自动启动会立刻后台运行 main.py。</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="composer-actions">
+              <span class="composer-note">流程：选词 → 创建 pending 任务 → 右侧人工确认 → 启动。</span>
+              <button class="btn btn-primary" onclick="submitCrawlTask()">创建抓帖任务</button>
+            </div>
+          </div>
+          <div class="crawl-side">
+            <div id="crawlTaskList"><div class="empty">点击「刷新任务列表」查看抓帖任务</div></div>
+            <div class="task-log-box" style="margin-top:10px">
+              <div class="task-log-head"><span>抓帖任务日志</span><button class="btn btn-sm" onclick="loadSelectedCrawlLog()">刷新日志</button></div>
+              <div class="task-log-content" id="crawlLogContent">选择任务后显示日志。</div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -755,6 +1106,8 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
 let trendChart=null, postRateChart=null, commentRateChart=null, autoRefresh=true;
 let _worthPosts=[], _groups=[], _activeGroup='', _historyMinutes=180;
 let _taskDraftPosts=[], _selectedTaskId='', _showArchivedTasks=false;
+let _crawlPresets=[], _crawlKeywordGroups=[], _selectedCrawlKeywords=new Set(), _selectedCrawlTaskId='', _showArchivedCrawlTasks=false;
+let _crawlMode='standard';
 
 const C = {
   posts:'#ff2442', comments:'#8b5cf6', blue:'#3b82f6', cyan:'#06b6d4',
@@ -762,14 +1115,18 @@ const C = {
 };
 
 async function fetchJSON(url){
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
   try{
-    const r=await fetch(url);
+    const r=await fetch(url, { signal: controller.signal });
     if(!r.ok){ throw new Error('HTTP '+r.status); }
     return r.json();
   }catch(e){
     console.error('fetchJSON error:', url, e);
     setVerdict('error','🔴 API 异常');
     throw e;
+  }finally{
+    clearTimeout(timeout);
   }
 }
 
@@ -807,7 +1164,7 @@ function containWheelScroll(el){
   }, {passive:false});
 }
 function containAllScrollAreas(root=document){
-  root.querySelectorAll('.tbl-wrap,.task-list,.task-detail,.task-log-content,.activity-list,.log-content').forEach(containWheelScroll);
+  root.querySelectorAll('.tbl-wrap,.task-list,.task-detail,.task-log-content,.activity-list,.log-content,.crawl-side,.keyword-textarea').forEach(containWheelScroll);
 }
 
 /* chart option factory — keeps theme consistent */
@@ -835,7 +1192,7 @@ async function updateStats(){
   document.getElementById('procState').innerHTML = p.alive
     ? '<span style="color:var(--green)">● 运行中</span>' : '<span style="color:var(--red)">● 已退出</span>';
   document.getElementById('procUptime').textContent = p.uptime||'--';
-  document.getElementById('lastWrite').textContent = fmtGap(st.last_crawl_ts/1000);
+  document.getElementById('lastWrite').textContent = fmtGap(((st.global_last_crawl_ts||st.last_crawl_ts||0)/1000));
   document.getElementById('activeKw').textContent = st.active_keyword||'--';
 
   document.getElementById('kpiPosts').textContent = (st.total_posts||0).toLocaleString();
@@ -904,6 +1261,10 @@ async function updateVelocity(){
   const min=v.minute;
   document.getElementById('liveSpeed').textContent = min.speed.posts+'帖 '+min.speed.comments+'评';
   document.getElementById('kpiSpeed').innerHTML = min.speed.posts+'<span style="font-size:15px;color:var(--text-3);font-weight:600">帖</span> · '+min.speed.comments+'<span style="font-size:15px;color:var(--text-3);font-weight:600">评</span>';
+  if(typeof Chart === 'undefined'){
+    console.warn('Chart.js not loaded; skip chart refresh');
+    return;
+  }
 
   // 最近 90 分钟的分钟级数据 —— 帖子与评论拆成两张独立图，各自独立坐标轴。
   // 量级差异（评论常是帖子的几十倍）不再互相压制，各自的采集节奏都看得清。
@@ -957,6 +1318,10 @@ function _highlightHist(min){
 async function updateHistory(minutes){
   if(minutes!==undefined){ _historyMinutes=minutes; _highlightHist(_historyMinutes); }
   const data=await fetchJSON('/api/history?minutes='+_historyMinutes);
+  if(typeof Chart === 'undefined'){
+    console.warn('Chart.js not loaded; skip history chart refresh');
+    return;
+  }
   const fmt=_historyMinutes>=720?fmtDateHour:fmtTime;
   const labels=data.map(d=>fmt(d.ts));
   const posts=data.map(d=>d.total_posts);
@@ -1095,15 +1460,26 @@ async function updateCommentStats(){
    Refresh orchestration
    ============================================================ */
 async function refreshAll(){
-  try{
-    await Promise.all([updateStats(),updateVelocity(),updateHistory(),updateActivity(),updateLogs(),updateCommentStats()]);
-  }catch(e){ /* errors handled per-call */ }
+  const results = await Promise.allSettled([
+    updateStats(),
+    updateVelocity(),
+    updateHistory(),
+    updateActivity(),
+    updateLogs(),
+    updateCommentStats()
+  ]);
+  const failed = results.filter(r=>r.status==='rejected');
+  if(failed.length){
+    console.warn('refresh modules failed:', failed.map(r=>r.reason && r.reason.message ? r.reason.message : String(r.reason)));
+  }
 }
 function manualRefresh(){
   const btn=document.getElementById('refreshBtn');
   const svg=btn.querySelector('svg');
   svg.classList.add('spin');
-  refreshAll().finally(()=>setTimeout(()=>svg.classList.remove('spin'),400));
+  refreshAll()
+    .catch(e=>console.error('manual refresh failed:', e))
+    .finally(()=>setTimeout(()=>svg.classList.remove('spin'),400));
 }
 
 /* ============================================================
@@ -1160,15 +1536,23 @@ async function createTaskFromSelected(){
   if(_taskDraftPosts.length>100){ alert('单个任务最多 100 帖，请减少选择数量'); return; }
   const today=new Date().toISOString().slice(0,10);
   document.getElementById('taskNameInput').value='video-comment-'+today;
-  document.getElementById('composerSub').textContent='已选 '+_taskDraftPosts.length+' 帖。创建后不会自动启动，需要到任务管理手动启动。';
+  document.getElementById('composerSub').textContent='已选 '+_taskDraftPosts.length+' 帖。默认只创建任务；如需立即运行，可在「更多选项」里切换启动后动作。';
   document.getElementById('taskComposer').classList.add('show');
+  toggleSubCommentConfig();
   document.getElementById('taskNameInput').focus();
 }
 function closeTaskComposer(){
   document.getElementById('taskComposer').classList.remove('show');
 }
+function toggleTaskMoreOptions(){
+  const more=document.getElementById('taskMoreOptions');
+  const btn=document.getElementById('taskMoreToggle');
+  const show=!more.classList.contains('show');
+  more.classList.toggle('show', show);
+  btn.textContent=show?'收起更多选项':'展开更多选项';
+}
 function toggleSubCommentConfig(){
-  const on=document.getElementById('taskGetSubComments').checked;
+  const on=document.getElementById('taskGetSubComments').value==='true';
   document.getElementById('taskSubCommentField').style.display=on?'block':'none';
 }
 function readBoundedNumber(id, label, min, max, allowFloat){
@@ -1185,13 +1569,22 @@ async function submitTaskFromComposer(){
   if(!name){ alert('请输入任务名称'); return; }
   let config;
   try{
-    const getSubComments=document.getElementById('taskGetSubComments').checked;
+    const getSubComments=document.getElementById('taskGetSubComments').value==='true';
+    const browserMode=document.getElementById('taskBrowserMode').value;
     config={
-      batch_size:readBoundedNumber('taskBatchSize','Batch size',5,20,false),
+      batch_size:readBoundedNumber('taskBatchSize','Batch size',1,20,false),
       max_comments:readBoundedNumber('taskMaxComments','一级评论上限',1,500,false),
-      max_sub_comments:getSubComments?readBoundedNumber('taskMaxSubComments','二级评论上限',1,1000,false):0,
+      max_sub_comments:getSubComments?readBoundedNumber('taskMaxSubComments','二级评论上限',0,1000,false):0,
       get_sub_comments:getSubComments,
-      delay:readBoundedNumber('taskDelay','间隔秒数',0,120,true)
+      delay:readBoundedNumber('taskDelay','间隔秒数',0,120,true),
+      limit:readBoundedNumber('taskLimit','仅处理前 N 条',0,100,false),
+      dry_run:document.getElementById('taskDryRun').checked,
+      user_data_dir:document.getElementById('taskUserDataDir').value.trim()||'%s_user_data_dir_account02',
+      browser_mode:browserMode,
+      enable_cdp:browserMode==='cdp_optional'||browserMode==='cdp_required',
+      require_cdp:browserMode==='cdp_required',
+      cdp_debug_port:readBoundedNumber('taskCdpPort','CDP 端口',1,65535,false),
+      start_mode:document.getElementById('taskStartMode').value
     };
   }catch(e){
     alert(e.message);
@@ -1205,8 +1598,368 @@ async function submitTaskFromComposer(){
     _selectedTaskId=data.id;
     closeTaskComposer();
     switchTab('task');
-    alert('任务已创建，状态为待处理。\nID：'+data.id+'\n请在任务管理里确认后手动启动。');
+    if(config.start_mode==='auto'){
+      await startTask(data.id, null, {skipConfirm:true});
+      alert('任务已创建并已提交启动。\nID：'+data.id);
+    }else{
+      alert('任务已创建，状态为待处理。\nID：'+data.id+'\n请在任务管理里确认后手动启动。');
+    }
   }catch(e){ alert('请求失败：'+e.message); }
+}
+
+/* ============================================================
+   Crawl tasks
+   ============================================================ */
+function parseKeywordsText(text){
+  const parts=String(text||'').replace(/，/g,',').split(/[\n,]+/).map(x=>x.trim()).filter(Boolean);
+  return [...new Set(parts)];
+}
+function syncCrawlTextareaFromSet(){
+  document.getElementById('crawlKeywords').value=[..._selectedCrawlKeywords].join('\n');
+  updateCrawlKeywordSummary();
+}
+function syncCrawlSetFromTextarea(){
+  _selectedCrawlKeywords=new Set(parseKeywordsText(document.getElementById('crawlKeywords').value));
+  updateCrawlKeywordSummary();
+}
+function updateCrawlKeywordSummary(){
+  const kws=parseKeywordsText(document.getElementById('crawlKeywords').value);
+  const maxCount=parseInt(document.getElementById('crawlMaxCount').value||'0',10);
+  const stop=document.getElementById('crawlStopCondition')?.value||'new_count';
+  const date=document.getElementById('crawlDateAfter')?.value||'';
+  const suffix=stop==='date_floor'
+    ? ((Number.isFinite(maxCount)&&maxCount>0)
+      ? ('从新到旧抓到 '+date+' 为止；每词最多搜索 '+maxCount+' 个结果帖子')
+      : ('从新到旧抓到 '+date+' 为止；不按数量限制'))
+    : ('每词最多搜索 '+(Number.isFinite(maxCount)?maxCount:0)+' 个结果帖子');
+  document.getElementById('crawlKeywordSummary').textContent=kws.length+' 个关键词 · '+suffix;
+}
+async function loadCrawlPresets(){
+  const sel=document.getElementById('crawlKeywordGroupSelect');
+  if(sel) sel.innerHTML='<option value="">加载中…</option>';
+  try{
+    _crawlKeywordGroups=await fetchJSON('/api/groups');
+    renderCrawlKeywordGroups();
+    if(!_selectedCrawlKeywords.size) applyCrawlKeywordGroup('Flu-HW');
+  }catch(e){
+    if(sel) sel.innerHTML='<option value="">关键词组加载失败</option>';
+  }
+}
+function renderCrawlKeywordGroups(){
+  const sel=document.getElementById('crawlKeywordGroupSelect');
+  if(!sel) return;
+  if(!_crawlKeywordGroups.length){
+    sel.innerHTML='<option value="">暂无关键词组</option>';
+    return;
+  }
+  const preferred=_crawlKeywordGroups.find(g=>g.name==='Flu-HW')||_crawlKeywordGroups.find(g=>g.active)||_crawlKeywordGroups[0];
+  sel.innerHTML=_crawlKeywordGroups.map(g=>`<option value="${escapeHtml(g.name)}"${g.name===preferred.name?' selected':''}>${escapeHtml(g.name)} · ${(g.keywords||[]).length}词</option>`).join('');
+  applyCrawlKeywordGroup(preferred.name);
+}
+function applyCrawlKeywordGroup(groupName){
+  const sel=document.getElementById('crawlKeywordGroupSelect');
+  const name=groupName || (sel&&sel.value) || 'Flu-HW';
+  const group=_crawlKeywordGroups.find(g=>g.name===name) || _crawlKeywordGroups.find(g=>g.name==='Flu-HW') || _crawlKeywordGroups[0];
+  if(!group) return;
+  if(sel) sel.value=group.name;
+  _selectedCrawlKeywords=new Set(group.keywords||[]);
+  document.getElementById('crawlKeywords').value=[..._selectedCrawlKeywords].join('\n');
+  const countEl=document.getElementById('crawlKeywordGroupCount');
+  if(countEl) countEl.value=String(_selectedCrawlKeywords.size);
+  updateCrawlKeywordSummary();
+}
+function renderCrawlPresets(){
+  return;
+  const box=document.getElementById('crawlPresetList');
+  if(!box) return;
+  if(!_crawlPresets.length){
+    box.innerHTML='<div class="empty" style="padding:20px">暂无关键词组</div>';
+    return;
+  }
+  box.innerHTML=_crawlPresets.map((g,gi)=>`<div class="preset-card">
+    <div class="preset-head">
+      <div>
+        <div class="preset-title">${escapeHtml(g.name)}</div>
+        <div class="preset-desc">${escapeHtml(g.desc||'')}</div>
+      </div>
+      <button class="btn btn-sm" onclick="addCrawlPreset(${gi})">加入整组</button>
+    </div>
+    <div class="kw-chip-wrap">${(g.keywords||[]).map(kw=>{
+      const active=_selectedCrawlKeywords.has(kw)?' active':'';
+      return `<button class="kw-chip-btn${active}" onclick="toggleCrawlKeyword('${escapeHtml(kw)}')">${escapeHtml(kw)}</button>`;
+    }).join('')}</div>
+  </div>`).join('');
+}
+function toggleCrawlKeyword(kw){
+  const text=String(kw||'').trim();
+  if(!text) return;
+  if(_selectedCrawlKeywords.has(text)) _selectedCrawlKeywords.delete(text);
+  else _selectedCrawlKeywords.add(text);
+  syncCrawlTextareaFromSet();
+  renderCrawlPresets();
+}
+function addCrawlPreset(idx){
+  const group=_crawlPresets[idx];
+  if(!group) return;
+  (group.keywords||[]).forEach(kw=>_selectedCrawlKeywords.add(kw));
+  syncCrawlTextareaFromSet();
+  renderCrawlPresets();
+}
+function useFirstCrawlPreset(showToast=true){
+  const group=_crawlPresets[0];
+  if(!group) return;
+  _selectedCrawlKeywords=new Set(group.keywords||[]);
+  syncCrawlTextareaFromSet();
+  renderCrawlPresets();
+  if(showToast) document.getElementById('crawlStatus').textContent='已填入「'+group.name+'」'+_selectedCrawlKeywords.size+' 个关键词';
+}
+function applyCrawlMode(mode){
+  _crawlMode=mode||'standard';
+  const fresh=_crawlMode==='fresh';
+  const todayName=fresh?'fluency-lag-fresh-since-2026-06-10':'fluency-lag-crawl';
+  const nameEl=document.getElementById('crawlTaskName');
+  if(nameEl && (!nameEl.value || nameEl.value==='fluency-lag-crawl' || nameEl.value==='fluency-lag-fresh-since-2026-06-10')){
+    nameEl.value=todayName;
+  }
+  document.getElementById('crawlModeSub').textContent=fresh
+    ? '从最新排序开始抓关键词组里的帖子；安全上限为 0 时一直抓到日期下限。'
+    : '按关键词组或手工输入关键词创建搜索任务。默认只创建，不自动启动。';
+  document.getElementById('crawlCommonHint').textContent=fresh
+    ? '当前模式固定建议：最新排序 + Flu-HW 关键词组。安全上限数的是搜索结果帖子，不是入库帖子。'
+    : '当前目标是抓取流畅/卡顿相关帖子；可在下方切换从新到旧停止条件。';
+  document.getElementById('crawlSortType').value='time_descending';
+  document.getElementById('crawlCountMode').value='incremental';
+  document.getElementById('crawlTopic').value='fluency_lag';
+  document.getElementById('crawlStopCondition').value=fresh?'date_floor':'new_count';
+  onCrawlStopConditionChange(false);
+}
+function onCrawlStopConditionChange(resetValue=true){
+  const stop=document.getElementById('crawlStopCondition').value;
+  const max=document.getElementById('crawlMaxCount');
+  const label=document.getElementById('crawlMaxCountLabel');
+  const help=document.getElementById('crawlMaxCountHelp');
+  if(stop==='date_floor'){
+    label.textContent='搜索安全上限 / 词';
+    help.textContent='0 表示不按数量限制，一直抓到日期下限；N 表示搜索结果达到 N 个帖子就停止，不看是否入库。';
+    if(resetValue) max.value='0';
+  }else{
+    label.textContent='搜索结果上限 / 词';
+    help.textContent='每个关键词搜索结果达到 N 个帖子就停止；这个数不是入库数。';
+    if(resetValue) max.value='100';
+  }
+  updateCrawlKeywordSummary();
+}
+function toggleCrawlMoreOptions(){
+  const more=document.getElementById('crawlMoreOptions');
+  const btn=document.getElementById('crawlMoreToggle');
+  const show=!more.classList.contains('show');
+  more.classList.toggle('show', show);
+  btn.textContent=show?'收起更多选项':'展开更多选项';
+}
+function toggleCrawlCommentConfig(){
+  const on=document.getElementById('crawlGetComments').value==='true';
+  document.getElementById('crawlMaxComments').disabled=!on;
+  document.getElementById('crawlGetSubComments').disabled=!on;
+  document.getElementById('crawlMaxSubComments').disabled=!on;
+}
+function readCrawlConfig(){
+  const browserMode=document.getElementById('crawlBrowserMode').value;
+  return {
+    topic:document.getElementById('crawlTopic').value.trim()||'fluency_lag',
+    stop_condition:document.getElementById('crawlStopCondition').value,
+    publish_date_after:document.getElementById('crawlDateAfter').value,
+    max_count:readBoundedNumber('crawlMaxCount','搜索安全上限',0,200000,false),
+    count_mode:document.getElementById('crawlCountMode').value,
+    sort_type:document.getElementById('crawlSortType').value,
+    note_type:document.getElementById('crawlNoteType').value,
+    get_comments:document.getElementById('crawlGetComments').value==='true',
+    get_sub_comments:document.getElementById('crawlGetSubComments').value==='true',
+    max_comments:readBoundedNumber('crawlMaxComments','一级评论上限',0,500,false),
+    max_sub_comments:readBoundedNumber('crawlMaxSubComments','二级评论上限',0,1000,false),
+    max_concurrency:readBoundedNumber('crawlMaxConcurrency','并发数',1,5,false),
+    enable_random_sleep:document.getElementById('crawlRandomSleep').value==='true',
+    min_sleep:readBoundedNumber('crawlMinSleep','最小睡眠秒',0,300,false),
+    max_sleep:readBoundedNumber('crawlMaxSleep','最大睡眠秒',0,600,false),
+    headless:false,
+    dry_run:document.getElementById('crawlDryRun').checked,
+    user_data_dir:document.getElementById('crawlUserDataDir').value.trim()||'%s_user_data_dir_account02',
+    browser_mode:browserMode,
+    enable_cdp:browserMode==='cdp_optional'||browserMode==='cdp_required',
+    require_cdp:browserMode==='cdp_required',
+    cdp_debug_port:readBoundedNumber('crawlCdpPort','CDP 端口',1,65535,false),
+    start_mode:document.getElementById('crawlStartMode').value
+  };
+}
+async function submitCrawlTask(){
+  syncCrawlSetFromTextarea();
+  const keywords=[..._selectedCrawlKeywords];
+  const name=document.getElementById('crawlTaskName').value.trim();
+  if(!name){ alert('请输入任务名称'); return; }
+  if(!keywords.length){ alert('请至少选择或输入一个关键词'); return; }
+  let config;
+  try{
+    config=readCrawlConfig();
+    if(config.max_sleep<config.min_sleep) throw new Error('最大睡眠秒不能小于最小睡眠秒');
+    if(config.stop_condition==='date_floor' && !config.publish_date_after) throw new Error('日期停止模式必须设置发布日期下限');
+  }catch(e){
+    alert(e.message);
+    return;
+  }
+  try{
+    const r=await fetch('/api/crawl-tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,keywords,config})});
+    const data=await r.json();
+    if(!r.ok||!data.ok){ alert('创建失败：'+(data.error||'未知错误')); return; }
+    _selectedCrawlTaskId=data.id;
+    await loadCrawlTasks();
+    revealCrawlTaskList();
+    if(config.start_mode==='auto'){
+      await startCrawlTask(data.id, null, {skipConfirm:true});
+      revealCrawlTaskList();
+      alert('抓帖任务已创建并已提交启动。\nID：'+data.id);
+    }else{
+      alert('抓帖任务已创建，状态为待处理。\nID：'+data.id+'\n请在右侧任务列表确认后手动启动。');
+    }
+  }catch(e){
+    alert('创建请求失败：'+e.message);
+  }
+}
+function crawlStatusLabel(s){
+  return {pending:'待处理',starting:'启动中',running:'运行中',completed:'已完成',failed:'失败'}[s]||s;
+}
+function revealCrawlTaskList(){
+  const el=document.getElementById('crawlTaskList');
+  if(!el) return;
+  el.scrollIntoView({block:'nearest', inline:'nearest', behavior:'smooth'});
+  el.animate([{outline:'0 solid rgba(255,36,66,0)'},{outline:'3px solid rgba(255,36,66,.22)'},{outline:'0 solid rgba(255,36,66,0)'}], {duration:900});
+}
+function crawlActionButtons(task){
+  const id=task.id;
+  if(task.archived_at) return `<button class="btn btn-sm" onclick="unarchiveCrawlTask('${id}',event)">取消归档</button>`;
+  const buttons=[];
+  if(task.status==='pending') buttons.push(`<button class="btn btn-sm btn-primary" onclick="startCrawlTask('${id}',event)">启动</button>`);
+  if(task.status==='failed') buttons.push(`<button class="btn btn-sm btn-primary" onclick="startCrawlTask('${id}',event)">重新启动</button>`);
+  if(task.status==='starting'||task.status==='running') buttons.push(`<button class="btn btn-sm btn-danger" onclick="cancelCrawlTask('${id}',event)">终止</button>`);
+  if(task.status!=='starting'&&task.status!=='running') buttons.push(`<button class="btn btn-sm" onclick="archiveCrawlTask('${id}',event)">归档</button>`);
+  return buttons.join('');
+}
+async function loadCrawlTasks(){
+  document.getElementById('crawlStatus').innerHTML='<span class="spin-load"></span> 加载中…';
+  const tasks=await fetchJSON('/api/crawl-tasks'+(_showArchivedCrawlTasks?'?archived=1':''));
+  document.getElementById('crawlBadge').textContent=tasks.length||0;
+  const box=document.getElementById('crawlTaskList');
+  if(!tasks.length){
+    box.innerHTML='<div class="empty">'+(_showArchivedCrawlTasks?'暂无归档抓帖任务':'暂无抓帖任务')+'</div>';
+    document.getElementById('crawlStatus').textContent=_showArchivedCrawlTasks?'无归档任务':'无任务';
+    return;
+  }
+  box.innerHTML=tasks.map(t=>{
+    const active=_selectedCrawlTaskId===t.id?' active':'';
+    const created=new Date(t.created_at*1000).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
+    const cfg=t.config||{};
+    const kws=t.keywords||[];
+    const stopLabel=cfg.stop_condition==='date_floor'
+      ? ('到 '+(cfg.publish_date_after||'日期下限')+' 停')
+      : ('搜索 '+(cfg.max_count||100)+' 停');
+    const limitLabel=cfg.max_count>0?('搜索 '+cfg.max_count+'/词'):'搜索不限量';
+    return `<div class="crawl-task-item${active}" onclick="selectCrawlTask('${t.id}')">
+      <div class="task-top">
+        <div class="task-name"><span>${escapeHtml(t.name)}</span></div>
+        <div class="task-row-actions">
+          <span class="status-chip ${escapeHtml(t.status)}">${crawlStatusLabel(t.status)}</span>
+          ${crawlActionButtons(t)}
+        </div>
+      </div>
+      <div class="task-meta">
+        <span class="mono task-id">${escapeHtml(t.id)}</span>
+        <span>${created}</span>
+        <span>${kws.length} 词 · ${limitLabel}</span>
+        <span>${escapeHtml(stopLabel)}</span>
+        <span>${escapeHtml(cfg.sort_type||'time_descending')}</span>
+        <span>${escapeHtml(cfg.publish_date_after||'')}</span>
+      </div>
+      <div class="crawl-task-keywords">${escapeHtml(kws.join('，'))}</div>
+      ${t.error_message?`<div class="task-post-error" style="margin-top:6px">${escapeHtml(t.error_message)}</div>`:''}
+    </div>`;
+  }).join('');
+  document.getElementById('crawlStatus').textContent=(_showArchivedCrawlTasks?'已归档 ':'未归档 ')+'共 '+tasks.length+' 个任务';
+  if(_selectedCrawlTaskId) loadCrawlTaskLog(_selectedCrawlTaskId);
+  containAllScrollAreas(document.getElementById('panelCrawl'));
+}
+async function selectCrawlTask(taskId){
+  _selectedCrawlTaskId=taskId;
+  document.querySelectorAll('.crawl-task-item').forEach(item=>item.classList.toggle('active', item.getAttribute('onclick')===`selectCrawlTask('${taskId}')`));
+  await loadCrawlTaskLog(taskId);
+}
+async function loadCrawlTaskLog(taskId){
+  const box=document.getElementById('crawlLogContent');
+  if(!box) return;
+  box.textContent='加载日志中…';
+  try{
+    const log=await fetchJSON('/api/crawl-tasks/'+taskId+'/log?lines=180');
+    if(log.error){ box.textContent=log.error; return; }
+    const lines=log.lines||[];
+    box.textContent=lines.length?lines.join('\n'):'暂无任务日志';
+    box.scrollTop=box.scrollHeight;
+  }catch(e){
+    box.textContent='日志加载失败：'+e.message;
+  }
+}
+function loadSelectedCrawlLog(){
+  if(!_selectedCrawlTaskId){ alert('请先选择一个抓帖任务'); return; }
+  loadCrawlTaskLog(_selectedCrawlTaskId);
+}
+async function startCrawlTask(taskId, ev, opts){
+  if(ev) ev.stopPropagation();
+  if(!(opts&&opts.skipConfirm)){
+    const ok=confirm('确认启动抓帖任务 '+taskId+'？\n会在后台运行 main.py --platform xhs --type search。');
+    if(!ok) return;
+  }
+  try{
+    const r=await fetch('/api/crawl-tasks/'+taskId+'/start',{method:'POST'});
+    const data=await r.json();
+    if(!r.ok){ alert('启动失败：'+(data.error||'未知错误')); return; }
+    _selectedCrawlTaskId=taskId;
+    await loadCrawlTasks();
+  }catch(e){ alert('启动请求失败：'+e.message); }
+}
+async function cancelCrawlTask(taskId, ev){
+  if(ev) ev.stopPropagation();
+  if(!confirm('确认终止抓帖任务 '+taskId+'？')) return;
+  try{
+    const r=await fetch('/api/crawl-tasks/'+taskId+'/cancel',{method:'POST'});
+    const data=await r.json();
+    if(!r.ok){ alert('终止失败：'+(data.error||'未知错误')); return; }
+    _selectedCrawlTaskId=taskId;
+    await loadCrawlTasks();
+  }catch(e){ alert('终止请求失败：'+e.message); }
+}
+async function archiveCrawlTask(taskId, ev){
+  if(ev) ev.stopPropagation();
+  if(!confirm('确认归档抓帖任务 '+taskId+'？')) return;
+  try{
+    const r=await fetch('/api/crawl-tasks/'+taskId+'/archive',{method:'POST'});
+    const data=await r.json();
+    if(!r.ok){ alert('归档失败：'+(data.error||'未知错误')); return; }
+    _selectedCrawlTaskId='';
+    await loadCrawlTasks();
+  }catch(e){ alert('归档请求失败：'+e.message); }
+}
+async function unarchiveCrawlTask(taskId, ev){
+  if(ev) ev.stopPropagation();
+  try{
+    const r=await fetch('/api/crawl-tasks/'+taskId+'/unarchive',{method:'POST'});
+    const data=await r.json();
+    if(!r.ok){ alert('取消归档失败：'+(data.error||'未知错误')); return; }
+    _selectedCrawlTaskId='';
+    await loadCrawlTasks();
+  }catch(e){ alert('取消归档请求失败：'+e.message); }
+}
+function switchCrawlArchiveView(showArchived){
+  _showArchivedCrawlTasks=showArchived;
+  _selectedCrawlTaskId='';
+  document.getElementById('crawlActiveSeg').classList.toggle('active', !showArchived);
+  document.getElementById('crawlArchivedSeg').classList.toggle('active', showArchived);
+  loadCrawlTasks();
 }
 
 /* ============================================================
@@ -1301,11 +2054,17 @@ function parseTaskConfig(task){
   return task.config_json||{};
 }
 function renderTaskConfig(config){
+  const browserModeLabel={standard:'标准浏览器',cdp_optional:'CDP 可用则用',cdp_required:'必须 CDP'}[config.browser_mode||'standard']||'标准浏览器';
   return [
     'Batch '+(config.batch_size??'--'),
     '一级最多 '+(config.max_comments??'--')+' / 篇',
     config.get_sub_comments?('抓二级 · 最多 '+(config.max_sub_comments??'--')+' / 篇'):'不抓二级',
-    '间隔 '+(config.delay??'--')+' 秒'
+    '间隔 '+(config.delay??'--')+' 秒',
+    (config.limit&&config.limit>0)?('仅处理前 '+config.limit+' 条'):'处理全部待处理',
+    config.dry_run?'Dry run':'真实执行',
+    browserModeLabel,
+    'Profile '+(config.user_data_dir||'%s_user_data_dir_account02'),
+    (config.enable_cdp?('CDP '+(config.cdp_debug_port||9222)):'CDP 关闭')
   ].map(x=>`<span class="tag">${escapeHtml(x)}</span>`).join('');
 }
 function taskActionButtons(task, compact){
@@ -1336,10 +2095,13 @@ function switchTaskArchiveView(showArchived){
   document.getElementById('taskArchivedSeg').classList.toggle('active', showArchived);
   loadTasks();
 }
-async function startTask(taskId, ev){
+async function startTask(taskId, ev, opts){
   if(ev) ev.stopPropagation();
-  const ok=confirm('确认启动任务 '+taskId+'？\n启动后会在后台运行 comment_fetcher。');
-  if(!ok) return;
+  const skipConfirm=opts&&opts.skipConfirm;
+  if(!skipConfirm){
+    const ok=confirm('确认启动任务 '+taskId+'？\n启动后会在后台运行 comment_fetcher。');
+    if(!ok) return;
+  }
   try{
     const r=await fetch('/api/tasks/'+taskId+'/start',{method:'POST'});
     const data=await r.json();
@@ -1491,11 +2253,42 @@ async function showTaskDetail(taskId, keepScroll){
    ============================================================ */
 function switchTab(name){
   const isWorth = name==='worth';
+  const isCrawl = name==='crawl';
+  const isFresh = name==='fresh';
+  const isTask = name==='task';
   document.getElementById('tabWorth').classList.toggle('active', isWorth);
-  document.getElementById('tabTask').classList.toggle('active', !isWorth);
+  document.getElementById('tabCrawl').classList.toggle('active', isCrawl);
+  document.getElementById('tabFreshCrawl').classList.toggle('active', isFresh);
+  document.getElementById('tabTask').classList.toggle('active', isTask);
   document.getElementById('panelWorth').classList.toggle('active', isWorth);
-  document.getElementById('panelTask').classList.toggle('active', !isWorth);
-  if(!isWorth) loadTasks();
+  document.getElementById('panelCrawl').classList.toggle('active', isCrawl||isFresh);
+  document.getElementById('panelTask').classList.toggle('active', isTask);
+  if(isCrawl||isFresh){
+    applyCrawlMode(isFresh?'fresh':'standard');
+    loadCrawlPresets();
+    loadCrawlTasks();
+    setTimeout(()=>{
+      const kw=document.getElementById('crawlKeywords');
+      if(kw&&!kw.dataset.bound){
+        kw.dataset.bound='1';
+        kw.addEventListener('input', syncCrawlSetFromTextarea);
+      }
+      const max=document.getElementById('crawlMaxCount');
+      if(max&&!max.dataset.bound){
+        max.dataset.bound='1';
+        max.addEventListener('input', updateCrawlKeywordSummary);
+      }
+      const date=document.getElementById('crawlDateAfter');
+      if(date&&!date.dataset.bound){
+        date.dataset.bound='1';
+        date.addEventListener('input', updateCrawlKeywordSummary);
+      }
+      toggleCrawlCommentConfig();
+      updateCrawlKeywordSummary();
+      containAllScrollAreas(document.getElementById('panelCrawl'));
+    },0);
+  }
+  if(isTask) loadTasks();
 }
 
 /* ============================================================

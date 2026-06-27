@@ -18,6 +18,7 @@ import time
 import urllib.error
 import urllib.request
 import asyncio
+from pathlib import Path
 
 from flask import Flask, jsonify, request
 
@@ -27,6 +28,7 @@ from db import (
 )
 from groups import list_groups, save_group, activate_group, delete_group
 from task_manager import init_task_db
+from crawl_task_manager import init_crawl_task_db
 from worth_scoring import score_post
 
 # --- config ---
@@ -49,6 +51,7 @@ logger = logging.getLogger("dashboard")
 
 app = Flask(__name__, static_folder=STATIC_DIR, static_url_path="/static")
 init_task_db()
+init_crawl_task_db()
 
 
 def _cdp_debug_port() -> int:
@@ -64,13 +67,36 @@ def _is_port_open(port: int) -> bool:
         return sock.connect_ex(("127.0.0.1", port)) == 0
 
 
-async def _verify_playwright_cdp(port: int, timeout: float = 3.0):
+def _cdp_websocket_from_active_port(port: int):
+    candidates = [
+        Path.home() / "Library/Application Support/Google/Chrome/DevToolsActivePort",
+        Path.home() / "Library/Application Support/Google/Chrome/Default/DevToolsActivePort",
+        Path(MEDIACRAWLER_ROOT) / "browser_data" / "chrome-cdp-debug" / "DevToolsActivePort",
+        Path(MEDIACRAWLER_ROOT) / "browser_data" / f"chrome-cdp-debug-{port}" / "DevToolsActivePort",
+    ]
+    for candidate in candidates:
+        try:
+            if not candidate.exists():
+                continue
+            lines = candidate.read_text(encoding="utf-8", errors="replace").splitlines()
+            if len(lines) < 2:
+                continue
+            active_port = int(lines[0].strip())
+            browser_path = lines[1].strip()
+            if active_port == port and browser_path.startswith("/devtools/browser/"):
+                return f"ws://127.0.0.1:{active_port}{browser_path}"
+        except Exception:
+            continue
+    return ""
+
+
+async def _verify_playwright_cdp(endpoint: str, timeout: float = 3.0):
     try:
         from playwright.async_api import async_playwright
 
         async with async_playwright() as playwright:
             await playwright.chromium.connect_over_cdp(
-                f"http://127.0.0.1:{port}",
+                endpoint,
                 timeout=timeout * 1000,
             )
         return True, ""
@@ -78,9 +104,9 @@ async def _verify_playwright_cdp(port: int, timeout: float = 3.0):
         return False, str(exc)
 
 
-def _check_playwright_cdp(port: int, timeout: float = 3.0):
+def _check_playwright_cdp(endpoint: str, timeout: float = 3.0):
     try:
-        return asyncio.run(_verify_playwright_cdp(port, timeout))
+        return asyncio.run(_verify_playwright_cdp(endpoint, max(timeout, 10.0)))
     except Exception as exc:
         return False, str(exc)
 
@@ -113,6 +139,10 @@ def _chrome_binary_path() -> str:
 def check_cdp_remote_debugging(timeout: float = 2.0, port: int = None, verify_playwright: bool = False):
     port = port or _cdp_debug_port()
     url = f"http://127.0.0.1:{port}/json/version"
+    data = {}
+    browser = ""
+    web_socket = ""
+    source = "json/version"
     try:
         with urllib.request.urlopen(url, timeout=timeout) as response:
             if response.status != 200:
@@ -124,21 +154,25 @@ def check_cdp_remote_debugging(timeout: float = 2.0, port: int = None, verify_pl
                 }
             data = json.loads(response.read().decode("utf-8", errors="replace") or "{}")
     except urllib.error.URLError as exc:
-        return {
-            "ok": False,
-            "port": port,
-            "url": url,
-            "error": str(exc),
-            "hint": (
-                "Chrome remote debugging is not reachable. Open Chrome and enable "
-                "chrome://inspect/#remote-debugging, or start Chrome with "
-                f"--remote-debugging-port={port}."
-            ),
-        }
+        web_socket = _cdp_websocket_from_active_port(port)
+        if not web_socket:
+            return {
+                "ok": False,
+                "port": port,
+                "url": url,
+                "error": str(exc),
+                "hint": (
+                    "Chrome remote debugging is not reachable. Open Chrome and enable "
+                    "chrome://inspect/#remote-debugging, or start Chrome with "
+                    f"--remote-debugging-port={port}."
+                ),
+            }
+        source = "DevToolsActivePort"
     except Exception as exc:
         return {"ok": False, "port": port, "url": url, "error": str(exc)}
-    browser = data.get("Browser", "")
-    web_socket = data.get("webSocketDebuggerUrl", "")
+    if data:
+        browser = data.get("Browser", "")
+        web_socket = data.get("webSocketDebuggerUrl", "")
     ok = bool(browser or web_socket)
     result = {
         "ok": ok,
@@ -146,10 +180,12 @@ def check_cdp_remote_debugging(timeout: float = 2.0, port: int = None, verify_pl
         "url": url,
         "browser": browser,
         "webSocketDebuggerUrl": web_socket,
+        "source": source,
         "raw": data,
     }
     if verify_playwright and ok:
-        playwright_ok, playwright_error = _check_playwright_cdp(port, timeout=min(timeout, 3.0))
+        endpoint = web_socket or f"http://127.0.0.1:{port}"
+        playwright_ok, playwright_error = _check_playwright_cdp(endpoint, timeout=max(timeout, 10.0))
         result["playwright_ok"] = playwright_ok
         if not playwright_ok:
             result["ok"] = False
@@ -239,6 +275,18 @@ def _with_crawler_db():
     if not _crawler_db_path or not os.path.exists(_crawler_db_path):
         return None
     return _connect(_crawler_db_path)
+
+
+def ensure_crawler_db_indexes():
+    """Create lightweight indexes needed by dashboard read queries."""
+    conn = _with_crawler_db()
+    if not conn:
+        return
+    try:
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_xhs_note_comment_note_id ON xhs_note_comment(note_id)")
+        conn.commit()
+    finally:
+        conn.close()
 
 
 # --- process info ---
@@ -368,23 +416,7 @@ def snapshot_loop():
             logger.error(f"Snapshot failed: {e}")
 
 
-# --- index (with chart.js caching) ---
-
-_chart_js_cache = None
-_chart_js_mtime = 0
-
-def _get_chart_js():
-    global _chart_js_cache, _chart_js_mtime
-    chart_path = os.path.join(STATIC_DIR, "chart.min.js")
-    if not os.path.exists(chart_path):
-        return ""
-    mtime = os.path.getmtime(chart_path)
-    if _chart_js_cache is not None and mtime == _chart_js_mtime:
-        return _chart_js_cache
-    with open(chart_path, "r") as f:
-        _chart_js_cache = f.read()
-        _chart_js_mtime = mtime
-        return _chart_js_cache
+# --- index ---
 
 
 @app.route("/")
@@ -394,9 +426,6 @@ def index():
         return "dashboard.html not found", 404
     with open(html_path, "r") as f:
         html = f.read()
-    chart_js = _get_chart_js()
-    if chart_js:
-        html = html.replace("<!-- CHARTJS_INLINE -->", f"<script>{chart_js}</script>")
     return html, 200, {"Content-Type": "text/html; charset=utf-8"}
 
 
@@ -413,11 +442,12 @@ def api_stats():
     alive, uptime, cpu, rss_mb, platform = get_process_info()
     db_size = get_db_size_mb()
 
+    health_ts = max(stats.get("last_crawl_ts", 0) or 0, stats.get("global_last_crawl_ts", 0) or 0)
     if alive:
-        if stats.get("last_crawl_ts", 0) == 0:
+        if health_ts == 0:
             verdict, vcolor = "🟡 等待首次写入", "warning"
         else:
-            gap = (time.time() * 1000 - stats["last_crawl_ts"]) / 1000
+            gap = (time.time() * 1000 - health_ts) / 1000
             if gap < 300:
                 verdict, vcolor = "🟢 正常", "ok"
             elif gap < 600:
@@ -584,7 +614,15 @@ def api_health():
     if conn:
         try:
             cur = conn.cursor()
-            cur.execute("SELECT MAX(add_ts) FROM xhs_note")
+            cur.execute(
+                """
+                SELECT MAX(ts) FROM (
+                    SELECT MAX(add_ts) AS ts FROM xhs_note
+                    UNION ALL
+                    SELECT MAX(add_ts) AS ts FROM xhs_note_comment
+                )
+                """
+            )
             row = cur.fetchone()
             ts = row[0] if row and row[0] else 0
             if ts:
@@ -748,12 +786,26 @@ def api_create_task():
     if len(posts) > 100:
         return jsonify({"error": "a task may contain at most 100 posts"}), 400
     try:
+        browser_mode = str(config.get("browser_mode", "standard") or "standard")
+        if browser_mode not in ("standard", "cdp_optional", "cdp_required"):
+            browser_mode = "standard"
+        user_data_dir = str(config.get("user_data_dir", "%s_user_data_dir_account02") or "%s_user_data_dir_account02").strip()
+        if not user_data_dir:
+            user_data_dir = "%s_user_data_dir_account02"
         config = {
             "batch_size": max(1, min(int(config.get("batch_size", 5)), 20)),
             "max_comments": max(1, min(int(config.get("max_comments", 200)), 500)),
             "max_sub_comments": max(0, min(int(config.get("max_sub_comments", 200)), 1000)),
             "get_sub_comments": config.get("get_sub_comments", False) is True,
             "delay": max(0, min(float(config.get("delay", 5)), 120)),
+            "limit": max(0, min(int(config.get("limit", 0) or 0), 100)),
+            "dry_run": config.get("dry_run", False) is True,
+            "user_data_dir": user_data_dir,
+            "browser_mode": browser_mode,
+            "enable_cdp": config.get("enable_cdp", False) is True or browser_mode in ("cdp_optional", "cdp_required"),
+            "require_cdp": config.get("require_cdp", False) is True or browser_mode == "cdp_required",
+            "cdp_debug_port": max(1, min(int(config.get("cdp_debug_port", 9222) or 9222), 65535)),
+            "start_mode": "auto" if config.get("start_mode") == "auto" else "manual",
         }
     except (TypeError, ValueError):
         return jsonify({"error": "invalid task config"}), 400
@@ -769,25 +821,12 @@ def _launch_comment_task(task_id, retry_failed=False):
         status = 404 if error == "task not found" else 409
         return jsonify({"error": error}), status
 
-    cdp_status = check_cdp_remote_debugging(verify_playwright=True)
-    if not cdp_status.get("ok"):
-        message = cdp_status.get("hint") or cdp_status.get("error") or "CDP remote debugging is not ready"
-        fail_task_start(task_id, message)
-        return jsonify({
-            "error": "CDP remote debugging is not ready",
-            "detail": message,
-            "cdp": cdp_status,
-        }), 409
-
     task = get_task(task_id)
     try:
         task_config = json.loads(task.get("config_json") or "{}")
     except (TypeError, json.JSONDecodeError):
         task_config = {}
-    effective_batch_size = max(
-        MIN_COMMENT_TASK_BATCH_SIZE,
-        min(int(task_config.get("batch_size", 5) or 5), 20),
-    )
+    effective_batch_size = max(1, min(int(task_config.get("batch_size", 5) or 5), 20))
 
     uv = shutil.which("uv")
     command = ([uv, "run", "python"] if uv else [sys.executable]) + [
@@ -797,16 +836,28 @@ def _launch_comment_task(task_id, retry_failed=False):
         "--max-comments", str(task_config.get("max_comments", 200)),
         "--max-sub-comments", str(task_config.get("max_sub_comments", 200)),
         "--delay", str(task_config.get("delay", 5)),
+        "--user-data-dir", str(task_config.get("user_data_dir", "%s_user_data_dir_account02")),
     ]
+    if int(task_config.get("limit", 0) or 0) > 0:
+        command.extend(["--limit", str(task_config.get("limit"))])
+    if task_config.get("dry_run"):
+        command.append("--dry-run")
     if retry_failed:
         command.append("--retry-failed")
     if task_config.get("get_sub_comments"):
         command.append("--get-sub-comments")
 
     try:
+        worker_env = os.environ.copy()
+        enable_cdp = bool(task_config.get("enable_cdp"))
+        require_cdp = bool(task_config.get("require_cdp"))
+        worker_env["MEDIACRAWLER_ENABLE_CDP"] = "true" if enable_cdp else "false"
+        worker_env["MEDIACRAWLER_REQUIRE_CDP"] = "true" if require_cdp else "false"
+        worker_env["MEDIACRAWLER_CDP_DEBUG_PORT"] = str(task_config.get("cdp_debug_port", 9222))
         worker = subprocess.Popen(
             command,
             cwd=MEDIACRAWLER_ROOT,
+            env=worker_env,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
@@ -937,6 +988,258 @@ def api_get_task_posts(task_id):
     from task_manager import get_task_posts
     status = request.args.get("status")
     return jsonify(get_task_posts(task_id, status))
+
+
+# --- keyword crawl task API ---
+
+CRAWL_KEYWORD_PRESETS = [
+    {
+        "name": "流畅/卡顿首轮",
+        "desc": "围绕手机体验里的流畅、卡顿、丝滑、稳定和性能感知，适合从新到旧抓取。",
+        "keywords": [
+            "手机卡顿", "手机流畅", "手机丝滑", "手机稳定", "手机性能",
+            "手机越用越卡", "手机不流畅", "手机反应慢", "系统卡顿", "系统流畅",
+            "安卓卡顿", "苹果卡顿", "华为卡顿", "小米卡顿", "苹果流畅", "华为流畅",
+        ],
+    },
+    {
+        "name": "品牌对比",
+        "desc": "覆盖苹果、华为、小米、安卓等品牌和系统体验对比。",
+        "keywords": [
+            "华为和苹果卡顿对比", "华为和苹果性能对比", "华为和苹果流畅度对比",
+            "华为和苹果稳定性对比", "华为和苹果丝滑对比", "安卓和苹果卡顿",
+            "安卓和苹果流畅度", "小米和苹果流畅度", "华为和小米流畅度",
+        ],
+    },
+    {
+        "name": "卡顿问题",
+        "desc": "偏问题表达，用来捕捉真实抱怨和卡顿触发场景。",
+        "keywords": [
+            "手机卡顿怎么办", "手机突然卡顿", "手机掉帧", "手机发热卡顿",
+            "手机更新后卡顿", "手机软件卡顿", "手机打字卡顿", "手机滑动卡顿",
+            "手机相机卡顿", "手机微信卡顿",
+        ],
+    },
+    {
+        "name": "流畅体验",
+        "desc": "偏正向表达，用来捕捉用户对流畅、丝滑、稳定的描述。",
+        "keywords": [
+            "手机很流畅", "系统很流畅", "手机丝滑体验", "手机动画丝滑",
+            "手机用起来丝滑", "手机稳定流畅", "手机不卡顿", "流畅度提升",
+            "系统流畅度", "手机顺滑",
+        ],
+    },
+    {
+        "name": "性能感知",
+        "desc": "覆盖性能、内存、刷新率、系统更新等可能影响流畅感的因素。",
+        "keywords": [
+            "手机性能体验", "手机内存不够卡", "手机刷新率流畅", "手机高刷流畅",
+            "手机系统优化", "手机系统更新体验", "手机后台卡顿", "手机应用启动慢",
+        ],
+    },
+]
+
+
+def _normalize_crawl_keywords(raw_keywords):
+    if isinstance(raw_keywords, str):
+        parts = raw_keywords.replace("\n", ",").replace("，", ",").split(",")
+    elif isinstance(raw_keywords, list):
+        parts = raw_keywords
+    else:
+        parts = []
+    keywords = []
+    seen = set()
+    for item in parts:
+        kw = str(item or "").strip()
+        if not kw or kw in seen:
+            continue
+        seen.add(kw)
+        keywords.append(kw)
+    return keywords
+
+
+def _normalize_crawl_config(config):
+    config = config or {}
+    browser_mode = str(config.get("browser_mode", "standard") or "standard")
+    if browser_mode not in ("standard", "cdp_optional", "cdp_required"):
+        browser_mode = "standard"
+    note_type = str(config.get("note_type", "all") or "all")
+    if note_type not in ("all", "video", "image"):
+        note_type = "all"
+    sort_type = str(config.get("sort_type", "time_descending") or "time_descending")
+    if sort_type not in ("general", "popularity_descending", "time_descending"):
+        sort_type = "time_descending"
+    count_mode = str(config.get("count_mode", "incremental") or "incremental")
+    if count_mode not in ("incremental", "total"):
+        count_mode = "incremental"
+    stop_condition = str(config.get("stop_condition", "new_count") or "new_count")
+    if stop_condition not in ("date_floor", "new_count"):
+        stop_condition = "new_count"
+    user_data_dir = str(config.get("user_data_dir", "%s_user_data_dir_account02") or "").strip() or "%s_user_data_dir_account02"
+    publish_date_after = str(config.get("publish_date_after", "2026-06-10") or "").strip()
+    default_max_count = 0 if stop_condition == "date_floor" else 100
+    return {
+        "topic": str(config.get("topic", "fluency_lag") or "fluency_lag"),
+        "stop_condition": stop_condition,
+        "publish_date_after": publish_date_after,
+        "max_count": max(0, min(int(config.get("max_count", default_max_count)), 200000)),
+        "count_mode": count_mode,
+        "sort_type": sort_type,
+        "note_type": note_type,
+        "get_comments": config.get("get_comments", False) is True,
+        "get_sub_comments": config.get("get_sub_comments", False) is True,
+        "max_comments": max(0, min(int(config.get("max_comments", 10)), 500)),
+        "max_sub_comments": max(0, min(int(config.get("max_sub_comments", 10)), 1000)),
+        "max_concurrency": max(1, min(int(config.get("max_concurrency", 1)), 5)),
+        "enable_random_sleep": config.get("enable_random_sleep", True) is True,
+        "min_sleep": max(0, min(int(config.get("min_sleep", 20)), 300)),
+        "max_sleep": max(0, min(int(config.get("max_sleep", 40)), 600)),
+        "headless": config.get("headless", False) is True,
+        "dry_run": config.get("dry_run", False) is True,
+        "user_data_dir": user_data_dir,
+        "browser_mode": browser_mode,
+        "enable_cdp": config.get("enable_cdp", False) is True or browser_mode in ("cdp_optional", "cdp_required"),
+        "require_cdp": config.get("require_cdp", False) is True or browser_mode == "cdp_required",
+        "cdp_debug_port": max(1, min(int(config.get("cdp_debug_port", 9222) or 9222), 65535)),
+        "browser_path": str(config.get("browser_path", "") or "").strip(),
+        "start_mode": "auto" if config.get("start_mode") == "auto" else "manual",
+    }
+
+
+@app.route("/api/crawl-keyword-presets")
+def api_crawl_keyword_presets():
+    return jsonify({"groups": CRAWL_KEYWORD_PRESETS})
+
+
+@app.route("/api/crawl-tasks")
+def api_list_crawl_tasks():
+    from crawl_task_manager import list_crawl_tasks
+    archived = request.args.get("archived") in ("1", "true", "yes")
+    return jsonify(list_crawl_tasks(archived=archived))
+
+
+@app.route("/api/crawl-tasks/<task_id>")
+def api_get_crawl_task(task_id):
+    from crawl_task_manager import get_crawl_task
+    task = get_crawl_task(task_id)
+    if not task:
+        return jsonify({"error": "not found"}), 404
+    return jsonify(task)
+
+
+@app.route("/api/crawl-tasks", methods=["POST"])
+def api_create_crawl_task():
+    from crawl_task_manager import create_crawl_task
+    data = request.get_json(force=True)
+    name = str(data.get("name", "") or "").strip()
+    keywords = _normalize_crawl_keywords(data.get("keywords", []))
+    if not name or not keywords:
+        return jsonify({"error": "name and keywords required"}), 400
+    if len(keywords) > 80:
+        return jsonify({"error": "a task may contain at most 80 keywords"}), 400
+    try:
+        config = _normalize_crawl_config(data.get("config", {}))
+    except (TypeError, ValueError):
+        return jsonify({"error": "invalid crawl task config"}), 400
+    task_id = create_crawl_task(name, keywords, config)
+    return jsonify({"ok": True, "id": task_id})
+
+
+def _launch_crawl_task(task_id):
+    from crawl_task_manager import claim_crawl_task, fail_crawl_task_start, set_crawl_worker_pid
+
+    claimed, error = claim_crawl_task(task_id)
+    if not claimed:
+        status = 404 if error == "task not found" else 409
+        return jsonify({"error": error}), status
+    uv = shutil.which("uv")
+    command = ([uv, "run", "python"] if uv else [sys.executable]) + [
+        os.path.join(DASHBOARD_DIR, "crawl_runner.py"),
+        "--task-id",
+        task_id,
+    ]
+    try:
+        worker = subprocess.Popen(
+            command,
+            cwd=MEDIACRAWLER_ROOT,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        set_crawl_worker_pid(task_id, worker.pid)
+    except Exception as exc:
+        fail_crawl_task_start(task_id, str(exc))
+        return jsonify({"error": f"failed to start crawl worker: {exc}"}), 500
+    return jsonify({"ok": True, "pid": worker.pid, "status": "starting"}), 202
+
+
+@app.route("/api/crawl-tasks/<task_id>/start", methods=["POST"])
+def api_start_crawl_task(task_id):
+    return _launch_crawl_task(task_id)
+
+
+@app.route("/api/crawl-tasks/<task_id>/cancel", methods=["POST"])
+def api_cancel_crawl_task(task_id):
+    from crawl_task_manager import get_crawl_task, mark_crawl_task_cancelled
+
+    task = get_crawl_task(task_id)
+    if not task:
+        return jsonify({"error": "task not found"}), 404
+    if task.get("status") not in ("starting", "running"):
+        return jsonify({"error": f"task is {task.get('status')}, cannot cancel"}), 409
+    pid = task.get("worker_pid")
+    killed = False
+    kill_errors = []
+    if pid:
+        try:
+            os.killpg(int(pid), 15)
+            killed = True
+        except ProcessLookupError:
+            killed = True
+        except Exception as exc:
+            kill_errors.append(str(exc))
+    mark_crawl_task_cancelled(task_id)
+    return jsonify({"ok": True, "killed": killed, "errors": kill_errors})
+
+
+@app.route("/api/crawl-tasks/<task_id>/archive", methods=["POST"])
+def api_archive_crawl_task(task_id):
+    from crawl_task_manager import set_crawl_task_archived
+    ok, error = set_crawl_task_archived(task_id, archived=True)
+    if not ok:
+        status = 404 if error == "task not found" else 409
+        return jsonify({"error": error}), status
+    return jsonify({"ok": True, "archived": True})
+
+
+@app.route("/api/crawl-tasks/<task_id>/unarchive", methods=["POST"])
+def api_unarchive_crawl_task(task_id):
+    from crawl_task_manager import set_crawl_task_archived
+    ok, error = set_crawl_task_archived(task_id, archived=False)
+    if not ok:
+        status = 404 if error == "task not found" else 409
+        return jsonify({"error": error}), status
+    return jsonify({"ok": True, "archived": False})
+
+
+@app.route("/api/crawl-tasks/<task_id>/log")
+def api_get_crawl_task_log(task_id):
+    from crawl_task_manager import get_crawl_task
+
+    task = get_crawl_task(task_id)
+    if not task:
+        return jsonify({"error": "task not found", "lines": []}), 404
+    log_path = task.get("log_path")
+    if not log_path or not os.path.exists(log_path):
+        return jsonify({"lines": [], "total": 0, "log_path": log_path})
+    lines = request.args.get("lines", 160, type=int)
+    lines = max(1, min(lines, 800))
+    try:
+        with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+            all_lines = f.read().splitlines()
+    except Exception as exc:
+        return jsonify({"error": str(exc), "lines": [], "log_path": log_path}), 500
+    return jsonify({"lines": all_lines[-lines:], "total": len(all_lines), "log_path": log_path})
 
 
 @app.route("/api/worth-digging")
@@ -1082,6 +1385,7 @@ def api_log_stats():
 if __name__ == "__main__":
     print(f"[dashboard] MediaCrawler root: {MEDIACRAWLER_ROOT}")
     print(f"[dashboard] Crawler DB: {_crawler_db_path or 'NOT FOUND'}")
+    ensure_crawler_db_indexes()
     init_dashboard_db()
     take_snapshot()
     bg = threading.Thread(target=snapshot_loop, daemon=True)
