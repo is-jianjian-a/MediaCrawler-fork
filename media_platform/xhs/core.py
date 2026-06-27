@@ -619,22 +619,35 @@ class XiaoHongShuCrawler(AbstractCrawler):
             return {"note_id": note_id, "_skip_detail": True}
 
         note_detail = None
-        utils.logger.debug(f"[get_note_detail_async_task] Begin get note detail, note_id: {note_id}")
         async with semaphore:
             try:
+                detail_timeout = int(getattr(config, "XHS_NOTE_DETAIL_TIMEOUT_SEC", 75) or 75)
+                utils.logger.info(f"[detail] fetching note detail note_id={note_id}, timeout={detail_timeout}s")
                 try:
-                    note_detail = await self.xhs_client.get_note_by_id(note_id, xsec_source, xsec_token)
+                    note_detail = await asyncio.wait_for(
+                        self.xhs_client.get_note_by_id(note_id, xsec_source, xsec_token),
+                        timeout=detail_timeout,
+                    )
                 except RetryError:
                     pass
 
                 if not note_detail:
-                    note_detail = await self.xhs_client.get_note_by_id_from_html(note_id, xsec_source, xsec_token,
-                                                                                 enable_cookie=True)
+                    utils.logger.info(f"[detail] API empty, fallback html note_id={note_id}")
+                    note_detail = await asyncio.wait_for(
+                        self.xhs_client.get_note_by_id_from_html(
+                            note_id,
+                            xsec_source,
+                            xsec_token,
+                            enable_cookie=True,
+                        ),
+                        timeout=detail_timeout,
+                    )
                     if not note_detail:
                         utils.logger.warning(f"[get_note_detail_async_task] Failed to get note detail, Id: {note_id}, skipping...")
                         return None
 
                 note_detail.update({"xsec_token": xsec_token, "xsec_source": xsec_source})
+                utils.logger.info(f"[detail] fetched note detail note_id={note_id}")
 
                 # Sleep after fetching note detail
                 await smart_sleep()
@@ -647,6 +660,9 @@ class XiaoHongShuCrawler(AbstractCrawler):
                 return None
             except DataFetchError as ex:
                 utils.logger.error(f"[XiaoHongShuCrawler.get_note_detail_async_task] Get note detail error: {ex}")
+                return None
+            except asyncio.TimeoutError:
+                utils.logger.warning(f"[detail] timeout after {detail_timeout}s note_id={note_id}, skipping...")
                 return None
             except KeyError as ex:
                 utils.logger.error(f"[XiaoHongShuCrawler.get_note_detail_async_task] have not fund note detail note_id:{note_id}, err: {ex}")
@@ -693,10 +709,13 @@ class XiaoHongShuCrawler(AbstractCrawler):
             utils.logger.info(f"[comments] fetching comments for note_id={note_id}")
             try:
                 utils.logger.info(f"[comments] refresh note detail before comments note_id={note_id}")
-                note_detail = await self.xhs_client.get_note_by_id(
-                    note_id=note_id,
-                    xsec_source="pc_search",
-                    xsec_token=xsec_token,
+                note_detail = await asyncio.wait_for(
+                    self.xhs_client.get_note_by_id(
+                        note_id=note_id,
+                        xsec_source="pc_search",
+                        xsec_token=xsec_token,
+                    ),
+                    timeout=int(getattr(config, "XHS_NOTE_DETAIL_TIMEOUT_SEC", 75) or 75),
                 )
                 if note_detail:
                     note_detail.update({"xsec_token": xsec_token, "xsec_source": "pc_search"})
@@ -710,8 +729,10 @@ class XiaoHongShuCrawler(AbstractCrawler):
             except Exception as exc:
                 utils.logger.warning(f"[comments] note detail refresh failed note_id={note_id}: {exc}")
 
-            # Use fixed crawling interval
-            crawl_interval = config.CRAWLER_MAX_SLEEP_SEC
+            # Comments use a separate, shorter interval than note-detail fetching.
+            # Note-detail fetching should remain conservative because it is the
+            # heavier operation and is more likely to trigger risk controls.
+            crawl_interval = int(getattr(config, "CRAWLER_COMMENT_SLEEP_SEC", 5) or 5)
             await self.xhs_client.get_note_all_comments(
                 note_id=note_id,
                 xsec_token=xsec_token,

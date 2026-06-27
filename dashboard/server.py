@@ -1094,6 +1094,8 @@ def _normalize_crawl_config(config):
         "enable_random_sleep": config.get("enable_random_sleep", True) is True,
         "min_sleep": max(0, min(int(config.get("min_sleep", 20)), 300)),
         "max_sleep": max(0, min(int(config.get("max_sleep", 40)), 600)),
+        "comment_sleep": max(1, min(int(config.get("comment_sleep", 5)), 120)),
+        "note_detail_timeout": max(10, min(int(config.get("note_detail_timeout", 75)), 300)),
         "headless": config.get("headless", False) is True,
         "dry_run": config.get("dry_run", False) is True,
         "user_data_dir": user_data_dir,

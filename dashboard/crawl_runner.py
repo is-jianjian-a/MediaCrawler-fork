@@ -82,6 +82,8 @@ def _build_command(task: dict) -> tuple[list[str], dict]:
             "MEDIACRAWLER_ENABLE_RANDOM_SLEEP": _bool_text(bool(config.get("enable_random_sleep", True))),
             "MEDIACRAWLER_CRAWLER_MIN_SLEEP_SEC": str(config.get("min_sleep", 20)),
             "MEDIACRAWLER_CRAWLER_MAX_SLEEP_SEC": str(config.get("max_sleep", 40)),
+            "MEDIACRAWLER_CRAWLER_COMMENT_SLEEP_SEC": str(config.get("comment_sleep", 5)),
+            "MEDIACRAWLER_XHS_NOTE_DETAIL_TIMEOUT_SEC": str(config.get("note_detail_timeout", 75)),
             "MEDIACRAWLER_USER_DATA_DIR": str(config.get("user_data_dir", "%s_user_data_dir_account02")),
             "MEDIACRAWLER_ENABLE_CDP": _bool_text(bool(config.get("enable_cdp"))),
             "MEDIACRAWLER_REQUIRE_CDP": _bool_text(bool(config.get("require_cdp"))),

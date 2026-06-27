@@ -73,6 +73,10 @@ ENABLE_RANDOM_SLEEP = os.getenv("MEDIACRAWLER_ENABLE_RANDOM_SLEEP", "true").lowe
 CRAWLER_MIN_SLEEP_SEC = int(os.getenv("MEDIACRAWLER_CRAWLER_MIN_SLEEP_SEC", "20"))
 # 随机睡眠的最大时间（秒）
 CRAWLER_MAX_SLEEP_SEC = int(os.getenv("MEDIACRAWLER_CRAWLER_MAX_SLEEP_SEC", "40"))
+# 评论抓取间隔（秒）。评论接口本身较轻，但仍需要避免连续请求。
+CRAWLER_COMMENT_SLEEP_SEC = int(os.getenv("MEDIACRAWLER_CRAWLER_COMMENT_SLEEP_SEC", "5"))
+# 单条帖子详情请求超时（秒）。超过后跳过该条，避免任务静默卡死。
+XHS_NOTE_DETAIL_TIMEOUT_SEC = int(os.getenv("MEDIACRAWLER_XHS_NOTE_DETAIL_TIMEOUT_SEC", "75"))
 
 # Whether to enable IP proxy
 ENABLE_IP_PROXY = False
