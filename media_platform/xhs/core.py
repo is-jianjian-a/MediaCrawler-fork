@@ -297,9 +297,6 @@ class XiaoHongShuCrawler(AbstractCrawler):
     async def search(self) -> None:
         """Search for notes and retrieve their comment information."""
         utils.logger.info("[XiaoHongShuCrawler.search] Begin search Xiaohongshu keywords")
-        xhs_limit_count = 20
-        if config.CRAWLER_MAX_NOTES_COUNT < xhs_limit_count:
-            config.CRAWLER_MAX_NOTES_COUNT = xhs_limit_count
         start_page = config.START_PAGE
 
         for keyword in config.KEYWORDS.split(","):
@@ -365,10 +362,24 @@ class XiaoHongShuCrawler(AbstractCrawler):
                     semaphore = asyncio.Semaphore(config.MAX_CONCURRENCY_NUM)
 
                     filtered_items = self._filter_search_items(notes_res.get("items", {}), existing_ids_set)
+                    truncated_count = 0
+                    if search_max_items > 0:
+                        remaining_search_items = search_max_items - total_searched_items
+                        if remaining_search_items <= 0:
+                            stop_reason = f"Reached search item safety limit ({search_max_items})"
+                            utils.logger.info(
+                                f"[XiaoHongShuCrawler.search] Reached search item safety limit before page processing: "
+                                f"{total_searched_items}/{search_max_items}. This counts search-result notes, not stored notes."
+                            )
+                            break
+                        if len(filtered_items) > remaining_search_items:
+                            truncated_count = len(filtered_items) - remaining_search_items
+                            filtered_items = filtered_items[:remaining_search_items]
                     total_searched_items += len(filtered_items)
                     new_count = sum(1 for item in filtered_items if not item.get("_skip_detail"))
                     exist_count = len(filtered_items) - new_count
-                    utils.logger.info(f"[搜索] 关键词=\"{keyword}\" 第{page}页 | 原始{len(notes_res.get('items', []))}条 过滤后{len(filtered_items)}条(新增{new_count}条+已存在{exist_count}条) | 处理{len(filtered_items)}条帖子 | 已搜索{total_searched_items}条")
+                    limit_suffix = f" | 安全上限截断{truncated_count}条" if truncated_count else ""
+                    utils.logger.info(f"[搜索] 关键词=\"{keyword}\" 第{page}页 | 原始{len(notes_res.get('items', []))}条 过滤后{len(filtered_items)}条(新增{new_count}条+已存在{exist_count}条) | 处理{len(filtered_items)}条帖子 | 已搜索{total_searched_items}条{limit_suffix}")
 
                     for rank_in_page, post_item in enumerate(filtered_items, start=1):
                         await xhs_store.record_xhs_note_keyword_hit(
