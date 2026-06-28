@@ -1636,7 +1636,8 @@ async function refreshAll(){
     updateActivity(),
     updateLogs(),
     updateCommentStats(),
-    loadActiveCrawlTask()
+    loadActiveCrawlTask(),
+    loadCrawlTasks()
   ]);
   const failed = results.filter(r=>r.status==='rejected');
   if(failed.length){
@@ -1981,6 +1982,7 @@ async function submitCrawlTask(){
     if(!r.ok||!data.ok){ alert('创建失败：'+(data.error||'未知错误')); return; }
     _selectedCrawlTaskId=data.id;
     await loadCrawlTasks();
+    await loadActiveCrawlTask();
     revealCrawlTaskList();
     if(config.start_mode==='auto'){
       await startCrawlTask(data.id, null, {skipConfirm:true});
@@ -2090,6 +2092,7 @@ async function startCrawlTask(taskId, ev, opts){
     if(!r.ok){ alert('启动失败：'+(data.error||'未知错误')); return; }
     _selectedCrawlTaskId=taskId;
     await loadCrawlTasks();
+    await loadActiveCrawlTask();
   }catch(e){ alert('启动请求失败：'+e.message); }
 }
 async function cancelCrawlTask(taskId, ev){
@@ -2101,6 +2104,7 @@ async function cancelCrawlTask(taskId, ev){
     if(!r.ok){ alert('终止失败：'+(data.error||'未知错误')); return; }
     _selectedCrawlTaskId=taskId;
     await loadCrawlTasks();
+    await loadActiveCrawlTask();
   }catch(e){ alert('终止请求失败：'+e.message); }
 }
 async function archiveCrawlTask(taskId, ev){
@@ -2112,6 +2116,7 @@ async function archiveCrawlTask(taskId, ev){
     if(!r.ok){ alert('归档失败：'+(data.error||'未知错误')); return; }
     _selectedCrawlTaskId='';
     await loadCrawlTasks();
+    await loadActiveCrawlTask();
   }catch(e){ alert('归档请求失败：'+e.message); }
 }
 async function unarchiveCrawlTask(taskId, ev){
@@ -2122,6 +2127,7 @@ async function unarchiveCrawlTask(taskId, ev){
     if(!r.ok){ alert('取消归档失败：'+(data.error||'未知错误')); return; }
     _selectedCrawlTaskId='';
     await loadCrawlTasks();
+    await loadActiveCrawlTask();
   }catch(e){ alert('取消归档请求失败：'+e.message); }
 }
 function switchCrawlArchiveView(showArchived){
