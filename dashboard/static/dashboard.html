@@ -391,6 +391,27 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
 .status-chip.completed_with_errors { background: var(--amber-soft); color: #b45309; }
 .status-chip.failed { background: var(--red-soft); color: #b91c1c; }
 
+/* active crawl task board */
+.active-task-card { overflow: hidden; }
+.active-task-head { display:flex;align-items:flex-start;justify-content:space-between;gap:14px;padding:14px 16px;border-bottom:1px solid var(--hairline);background:linear-gradient(180deg,#fff,var(--surface-2)); }
+.active-task-title { font-size:14px;font-weight:750;display:flex;align-items:center;gap:8px;min-width:0; }
+.active-task-title span.name { overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+.active-task-sub { margin-top:4px;font-size:11px;color:var(--text-3);line-height:1.45; }
+.active-task-grid { display:grid;grid-template-columns:repeat(6,1fr);gap:10px;padding:14px 16px;border-bottom:1px solid var(--hairline); }
+.active-task-metric { border:1px solid var(--border);border-radius:var(--r-sm);padding:10px;background:var(--surface);min-width:0; }
+.active-task-metric .label { font-size:10px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em; }
+.active-task-metric .value { margin-top:5px;font-size:17px;font-weight:750;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+.active-task-metric .foot { margin-top:4px;font-size:10px;color:var(--text-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+.active-task-body { display:grid;grid-template-columns:1.1fr .9fr;gap:0; }
+.active-task-keywords { padding:12px 16px;overflow:auto;max-height:320px;overscroll-behavior:contain;border-right:1px solid var(--hairline); }
+.active-task-log { max-height:320px;overflow:auto;overscroll-behavior:contain;padding:12px 14px;font-family:'SF Mono',ui-monospace,Menlo,monospace;font-size:10.5px;line-height:1.55;background:#111827;color:#d1d5db;white-space:pre-wrap;word-break:break-word; }
+.active-task-log .log-line { color:#d1d5db; }
+.active-task-log .lvl-INFO { color:#e5e7eb; }
+.active-task-log .lvl-WARNING { color:#fbbf24; }
+.active-task-log .lvl-ERROR { color:#f87171; }
+@media(max-width:1180px){ .active-task-grid{grid-template-columns:repeat(3,1fr);} .active-task-body{grid-template-columns:1fr;} .active-task-keywords{border-right:none;border-bottom:1px solid var(--hairline);} }
+@media(max-width:680px){ .active-task-grid{grid-template-columns:repeat(2,1fr);} .active-task-head{flex-direction:column;} }
+
 /* ---------- preview ---------- */
 .preview-grid { display: grid; grid-template-columns: 300px 1fr; gap: 18px; padding: 16px 18px; }
 @media(max-width:760px){ .preview-grid{ grid-template-columns: 1fr; } }
@@ -522,6 +543,7 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
       <div class="metric"><span style="color:var(--text-3);font-size:11px">上次写入</span> <b id="lastWrite" style="font-size:12px">--</b></div>
       <div class="metric"><span style="color:var(--text-3);font-size:11px">活跃关键词</span> <b id="activeKw" style="font-size:12px">--</b></div>
       <div class="metric"><span style="color:var(--text-3);font-size:11px">实时速度</span> <b id="liveSpeed" style="font-size:12px;color:var(--brand)">--</b></div>
+      <div class="metric"><span style="color:var(--text-3);font-size:11px">当前视图</span> <b style="font-size:12px">关键词组筛选</b><span style="font-size:11px;color:var(--text-3)"> · 非运行任务</span></div>
       <div class="metric" style="margin-left:auto;display:flex;align-items:center;gap:8px">
         <span style="color:var(--text-3);font-size:11px">趋势</span>
         <div class="seg">
@@ -571,6 +593,45 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
         <div class="kpi-label"><span class="kpi-ico" style="color:var(--amber)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>零评论帖</div>
         <div class="kpi-value" id="kpiZeroCmt">--</div>
         <div class="kpi-foot" id="kpiZeroCmtFoot">--</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ ACTIVE CRAWL TASK ============ -->
+  <div class="section">
+    <div class="section-head">
+      <div class="section-title">当前运行任务 <span class="tag">任务视图</span></div>
+      <div class="section-sub">独立于关键词组监控 · 展示正在运行的抓帖任务</div>
+    </div>
+    <div class="card active-task-card" id="activeTaskCard">
+      <div class="active-task-head">
+        <div>
+          <div class="active-task-title">
+            <span class="status-chip pending" id="activeTaskStatus">加载中</span>
+            <span class="name" id="activeTaskName">正在读取任务状态…</span>
+          </div>
+          <div class="active-task-sub" id="activeTaskSub">当前面板按运行中任务关键词统计，不受 active keyword group 影响。</div>
+        </div>
+        <button class="btn btn-sm" onclick="loadActiveCrawlTask()">刷新当前任务</button>
+      </div>
+      <div class="active-task-grid">
+        <div class="active-task-metric"><div class="label">任务 ID</div><div class="value mono" id="activeTaskId">--</div><div class="foot" id="activeTaskPid">PID --</div></div>
+        <div class="active-task-metric"><div class="label">当前关键词</div><div class="value" id="activeTaskKeyword">--</div><div class="foot" id="activeTaskStage">--</div></div>
+        <div class="active-task-metric"><div class="label">帖子 / 评论</div><div class="value" id="activeTaskTotals">--</div><div class="foot" id="activeTaskPlatformComments">平台评论 --</div></div>
+        <div class="active-task-metric"><div class="label">最近 15 分钟</div><div class="value" id="activeTaskSpeed15">--</div><div class="foot">新增帖 · 新增评</div></div>
+        <div class="active-task-metric"><div class="label">运行时长</div><div class="value" id="activeTaskRuntime">--</div><div class="foot" id="activeTaskStarted">--</div></div>
+        <div class="active-task-metric"><div class="label">最近活动</div><div class="value" id="activeTaskLastActivity">--</div><div class="foot" id="activeTaskWarnings">--</div></div>
+      </div>
+      <div class="active-task-body">
+        <div class="active-task-keywords">
+          <table class="tbl">
+            <thead><tr>
+              <th>任务关键词</th><th style="text-align:right">帖子</th><th style="text-align:right">库内评论</th><th style="text-align:right">平台评论</th><th>最近入库</th><th>状态</th>
+            </tr></thead>
+            <tbody id="activeTaskKeywordBody"><tr><td colspan="6" style="text-align:center;color:var(--text-3);padding:20px">加载中…</td></tr></tbody>
+          </table>
+        </div>
+        <div class="active-task-log" id="activeTaskLog"><div class="log-line">加载日志中…</div></div>
       </div>
     </div>
   </div>
@@ -1140,6 +1201,13 @@ function fmtGap(ts){
   if(s<3600)return Math.floor(s/60)+' 分前';
   return Math.floor(s/3600)+' 时前';
 }
+function fmtDuration(sec){
+  sec=Math.max(0,Math.floor(sec||0));
+  const h=Math.floor(sec/3600), m=Math.floor((sec%3600)/60), s=sec%60;
+  if(h>0) return h+'时 '+m+'分';
+  if(m>0) return m+'分 '+s+'秒';
+  return s+'秒';
+}
 function setVerdict(color, text){
   const pill=document.getElementById('verdictPill');
   pill.className='verdict-pill '+color;
@@ -1164,7 +1232,7 @@ function containWheelScroll(el){
   }, {passive:false});
 }
 function containAllScrollAreas(root=document){
-  root.querySelectorAll('.tbl-wrap,.task-list,.task-detail,.task-log-content,.activity-list,.log-content,.crawl-side,.keyword-textarea').forEach(containWheelScroll);
+  root.querySelectorAll('.tbl-wrap,.task-list,.task-detail,.task-log-content,.activity-list,.log-content,.crawl-side,.keyword-textarea,.active-task-keywords,.active-task-log').forEach(containWheelScroll);
 }
 
 /* chart option factory — keeps theme consistent */
@@ -1251,6 +1319,107 @@ function renderKeywordTable(rows, maxNotes){
       <td><span class="chip ${chipCls}">${chipText}</span></td>
     </tr>`;
   }).join('');
+}
+
+/* ============================================================
+   Active crawl task board
+   ============================================================ */
+function renderActiveTaskLog(lines){
+  const box=document.getElementById('activeTaskLog');
+  if(!box) return;
+  if(!lines||!lines.length){
+    box.innerHTML='<div class="log-line" style="color:#9ca3af">暂无任务日志</div>';
+    return;
+  }
+  box.innerHTML=lines.map(l=>{
+    let cls='';
+    if(l.includes('ERROR')) cls='lvl-ERROR';
+    else if(l.includes('WARNING')) cls='lvl-WARNING';
+    else if(l.includes('INFO')) cls='lvl-INFO';
+    return '<div class="log-line"><span class="'+cls+'">'+escapeHtml(l)+'</span></div>';
+  }).join('');
+  box.scrollTop=box.scrollHeight;
+}
+function renderActiveTaskKeywords(rows, currentKeyword){
+  const tb=document.getElementById('activeTaskKeywordBody');
+  if(!tb) return;
+  if(!rows||!rows.length){
+    tb.innerHTML='<tr><td colspan="6" style="text-align:center;color:var(--text-3);padding:20px">暂无任务关键词</td></tr>';
+    return;
+  }
+  tb.innerHTML=rows.map(r=>{
+    const isCurrent=r.keyword===currentKeyword || r.status==='当前';
+    const chipCls=isCurrent?'active':((r.post_count||0)>0?'done':'wait');
+    const chipText=isCurrent?'当前':((r.post_count||0)>0?'已入库':'等待');
+    const lastTs=Math.max(r.last_activity_ts||0,r.last_note_ts||0,r.last_comment_ts||0)/1000;
+    return `<tr>
+      <td style="font-weight:600">${escapeHtml(r.keyword)}</td>
+      <td style="text-align:right" class="num">${(r.post_count||0).toLocaleString()}</td>
+      <td style="text-align:right" class="num">${(r.db_comment_count||0).toLocaleString()}</td>
+      <td style="text-align:right" class="num">${(r.platform_comment_count||0).toLocaleString()}</td>
+      <td>${lastTs?fmtGap(lastTs):'--'}</td>
+      <td><span class="chip ${chipCls}">${chipText}</span></td>
+    </tr>`;
+  }).join('');
+}
+async function loadActiveCrawlTask(){
+  const statusEl=document.getElementById('activeTaskStatus');
+  if(statusEl){ statusEl.className='status-chip starting'; statusEl.textContent='刷新中'; }
+  try{
+    const data=await fetchJSON('/api/crawl-tasks/active-summary');
+    const task=data.active_task || data.recent_task;
+    const active=!!data.active_task;
+    if(!task){
+      document.getElementById('activeTaskStatus').className='status-chip pending';
+      document.getElementById('activeTaskStatus').textContent='空闲';
+      document.getElementById('activeTaskName').textContent='暂无抓帖任务';
+      document.getElementById('activeTaskSub').textContent='没有运行中任务，也没有可展示的最近任务。';
+      document.getElementById('activeTaskId').textContent='--';
+      document.getElementById('activeTaskPid').textContent='PID --';
+      document.getElementById('activeTaskKeyword').textContent='--';
+      document.getElementById('activeTaskStage').textContent='--';
+      document.getElementById('activeTaskTotals').textContent='--';
+      document.getElementById('activeTaskPlatformComments').textContent='平台评论 --';
+      document.getElementById('activeTaskSpeed15').textContent='--';
+      document.getElementById('activeTaskRuntime').textContent='--';
+      document.getElementById('activeTaskStarted').textContent='--';
+      document.getElementById('activeTaskLastActivity').textContent='--';
+      document.getElementById('activeTaskWarnings').textContent='--';
+      renderActiveTaskKeywords([], '');
+      renderActiveTaskLog([]);
+      return;
+    }
+    const log=task.log||{};
+    const totals=task.totals||{};
+    const speed15=(task.speed&&task.speed['15'])||{posts:0,comments:0};
+    const currentKeyword=log.current_keyword||'--';
+    document.getElementById('activeTaskStatus').className='status-chip '+escapeHtml(task.status||'pending');
+    document.getElementById('activeTaskStatus').textContent=crawlStatusLabel(task.status||'pending');
+    document.getElementById('activeTaskName').textContent=task.name||task.id||'未命名任务';
+    document.getElementById('activeTaskSub').textContent=(active?'正在运行':'暂无运行中任务，显示最近任务')+' · '+(task.keywords||[]).length+' 个关键词 · 日志 '+(task.log_path||'--');
+    document.getElementById('activeTaskId').textContent=task.id||'--';
+    document.getElementById('activeTaskPid').textContent='PID '+(task.worker_pid||'--')+(task.worker_alive?' · alive':'');
+    document.getElementById('activeTaskKeyword').textContent=currentKeyword;
+    document.getElementById('activeTaskStage').textContent=(log.last_detail_note_id?'详情 '+log.last_detail_note_id:'')+(log.last_comment_note_id?' · 评论 '+log.last_comment_note_id:'') || '--';
+    document.getElementById('activeTaskTotals').textContent=(totals.posts||0).toLocaleString()+'帖 · '+(totals.db_comments||0).toLocaleString()+'评';
+    document.getElementById('activeTaskPlatformComments').textContent='平台评论 '+(totals.platform_comments||0).toLocaleString();
+    document.getElementById('activeTaskSpeed15').textContent=(speed15.posts||0)+'帖 · '+(speed15.comments||0)+'评';
+    document.getElementById('activeTaskRuntime').textContent=fmtDuration(task.runtime_seconds||0);
+    document.getElementById('activeTaskStarted').textContent=task.started_at?('开始 '+fmtDateHour(task.started_at)):'未启动';
+    document.getElementById('activeTaskLastActivity').textContent=totals.last_activity_ts?fmtGap(totals.last_activity_ts/1000):'--';
+    const warn=[];
+    if(log.has_error) warn.push('ERROR');
+    if(log.has_warning) warn.push('WARNING');
+    if(task.error_message) warn.push(task.error_message);
+    document.getElementById('activeTaskWarnings').textContent=warn.length?warn.join(' · '):'无异常';
+    renderActiveTaskKeywords(task.keyword_stats||[], log.current_keyword||'');
+    renderActiveTaskLog(log.lines||[]);
+    containAllScrollAreas(document.getElementById('activeTaskCard'));
+  }catch(e){
+    document.getElementById('activeTaskStatus').className='status-chip failed';
+    document.getElementById('activeTaskStatus').textContent='加载失败';
+    document.getElementById('activeTaskSub').textContent=e.message;
+  }
 }
 
 /* ============================================================
@@ -1466,7 +1635,8 @@ async function refreshAll(){
     updateHistory(),
     updateActivity(),
     updateLogs(),
-    updateCommentStats()
+    updateCommentStats(),
+    loadActiveCrawlTask()
   ]);
   const failed = results.filter(r=>r.status==='rejected');
   if(failed.length){

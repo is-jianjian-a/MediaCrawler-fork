@@ -8,6 +8,7 @@ Independent of crawler — survives crawler restart/exit.
 import json
 import logging
 import os
+import re
 import shutil
 import socket
 import sqlite3
@@ -1118,6 +1119,218 @@ def api_list_crawl_tasks():
     from crawl_task_manager import list_crawl_tasks
     archived = request.args.get("archived") in ("1", "true", "yes")
     return jsonify(list_crawl_tasks(archived=archived))
+
+
+def _pid_alive(pid) -> bool:
+    try:
+        if not pid:
+            return False
+        os.kill(int(pid), 0)
+        return True
+    except Exception:
+        return False
+
+
+def _read_tail_lines(log_path: str, limit: int = 80) -> tuple[list[str], int]:
+    if not log_path or not os.path.exists(log_path):
+        return [], 0
+    try:
+        with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.read().splitlines()
+        return lines[-limit:], len(lines)
+    except Exception as exc:
+        return [f"[dashboard-log-error] {exc}"], 1
+
+
+def _parse_crawl_log(lines: list[str]) -> dict:
+    info = {
+        "current_keyword": "",
+        "last_detail_note_id": "",
+        "last_comment_note_id": "",
+        "last_line": lines[-1] if lines else "",
+        "has_error": False,
+        "has_warning": False,
+    }
+    kw_re = re.compile(r"Current search keyword:\s*(.+)$")
+    detail_re = re.compile(r"\[detail\] fetching note detail note_id=([^,\\s]+)")
+    comment_re = re.compile(r"\[comments\] fetching comments for note_id=([^,\\s]+)")
+    for line in lines:
+        if "ERROR" in line:
+            info["has_error"] = True
+        if "WARNING" in line:
+            info["has_warning"] = True
+        kw_match = kw_re.search(line)
+        if kw_match:
+            info["current_keyword"] = kw_match.group(1).strip()
+        detail_match = detail_re.search(line)
+        if detail_match:
+            info["last_detail_note_id"] = detail_match.group(1)
+        comment_match = comment_re.search(line)
+        if comment_match:
+            info["last_comment_note_id"] = comment_match.group(1)
+    return info
+
+
+def _crawl_keyword_stats(conn: sqlite3.Connection, keywords: list[str]) -> list[dict]:
+    if not keywords:
+        return []
+    ph = _kw_placeholders(keywords)
+    rows = {
+        kw: {
+            "keyword": kw,
+            "post_count": 0,
+            "db_comment_count": 0,
+            "platform_comment_count": 0,
+            "last_note_ts": 0,
+            "last_comment_ts": 0,
+            "last_activity_ts": 0,
+            "status": "等待",
+        }
+        for kw in keywords
+    }
+
+    cur = conn.cursor()
+    cur.execute(
+        f"""
+        SELECT source_keyword, COUNT(*), COALESCE(SUM(comment_count), 0), COALESCE(MAX(add_ts), 0)
+        FROM xhs_note
+        WHERE source_keyword IN ({ph})
+        GROUP BY source_keyword
+        """,
+        keywords,
+    )
+    for kw, post_count, platform_comments, last_note_ts in cur.fetchall():
+        item = rows.get(kw)
+        if not item:
+            continue
+        item["post_count"] = post_count or 0
+        item["platform_comment_count"] = platform_comments or 0
+        item["last_note_ts"] = last_note_ts or 0
+        item["last_activity_ts"] = max(item["last_activity_ts"], item["last_note_ts"])
+        item["status"] = "已入库" if item["post_count"] else "等待"
+
+    cur.execute(
+        f"""
+        SELECT n.source_keyword, COUNT(*), COALESCE(MAX(c.add_ts), 0)
+        FROM xhs_note_comment c
+        JOIN xhs_note n ON c.note_id = n.note_id
+        WHERE n.source_keyword IN ({ph})
+        GROUP BY n.source_keyword
+        """,
+        keywords,
+    )
+    for kw, comment_count, last_comment_ts in cur.fetchall():
+        item = rows.get(kw)
+        if not item:
+            continue
+        item["db_comment_count"] = comment_count or 0
+        item["last_comment_ts"] = last_comment_ts or 0
+        item["last_activity_ts"] = max(item["last_activity_ts"], item["last_comment_ts"])
+
+    return [rows[kw] for kw in keywords]
+
+
+def _crawl_task_speed(conn: sqlite3.Connection, keywords: list[str]) -> dict:
+    if not keywords:
+        return {"15": {"posts": 0, "comments": 0}, "30": {"posts": 0, "comments": 0}, "60": {"posts": 0, "comments": 0}}
+    ph = _kw_placeholders(keywords)
+    now_ms = int(time.time() * 1000)
+    speed = {}
+    cur = conn.cursor()
+    for minutes in (15, 30, 60):
+        cutoff = now_ms - minutes * 60 * 1000
+        cur.execute(
+            f"SELECT COUNT(*) FROM xhs_note WHERE source_keyword IN ({ph}) AND add_ts >= ?",
+            keywords + [cutoff],
+        )
+        posts = cur.fetchone()[0] or 0
+        cur.execute(
+            f"""
+            SELECT COUNT(*)
+            FROM xhs_note_comment c
+            JOIN xhs_note n ON c.note_id = n.note_id
+            WHERE n.source_keyword IN ({ph}) AND c.add_ts >= ?
+            """,
+            keywords + [cutoff],
+        )
+        comments = cur.fetchone()[0] or 0
+        speed[str(minutes)] = {"posts": posts, "comments": comments}
+    return speed
+
+
+def _crawl_task_summary(task: dict | None) -> dict | None:
+    if not task:
+        return None
+    keywords = task.get("keywords") or []
+    config = task.get("config") or {}
+    log_lines, log_total = _read_tail_lines(task.get("log_path"), 80)
+    log_info = _parse_crawl_log(log_lines)
+    started_at = task.get("started_at") or task.get("created_at") or 0
+    runtime_seconds = max(0, int(time.time() - started_at)) if started_at else 0
+    summary = {
+        "id": task.get("id"),
+        "name": task.get("name"),
+        "status": task.get("status"),
+        "created_at": task.get("created_at"),
+        "started_at": task.get("started_at"),
+        "completed_at": task.get("completed_at"),
+        "runtime_seconds": runtime_seconds,
+        "keywords": keywords,
+        "config": config,
+        "log_path": task.get("log_path"),
+        "worker_pid": task.get("worker_pid"),
+        "worker_alive": _pid_alive(task.get("worker_pid")),
+        "error_message": task.get("error_message"),
+        "exit_code": task.get("exit_code"),
+        "log": {
+            **log_info,
+            "lines": log_lines[-30:],
+            "total": log_total,
+        },
+        "keyword_stats": [],
+        "speed": {"15": {"posts": 0, "comments": 0}, "30": {"posts": 0, "comments": 0}, "60": {"posts": 0, "comments": 0}},
+        "totals": {
+            "posts": 0,
+            "db_comments": 0,
+            "platform_comments": 0,
+            "last_activity_ts": 0,
+        },
+    }
+
+    conn = _with_crawler_db()
+    if not conn:
+        return summary
+    try:
+        keyword_stats = _crawl_keyword_stats(conn, keywords)
+        summary["keyword_stats"] = keyword_stats
+        summary["speed"] = _crawl_task_speed(conn, keywords)
+        summary["totals"] = {
+            "posts": sum(k.get("post_count", 0) for k in keyword_stats),
+            "db_comments": sum(k.get("db_comment_count", 0) for k in keyword_stats),
+            "platform_comments": sum(k.get("platform_comment_count", 0) for k in keyword_stats),
+            "last_activity_ts": max([k.get("last_activity_ts", 0) for k in keyword_stats] or [0]),
+        }
+        current_keyword = summary["log"].get("current_keyword")
+        for item in summary["keyword_stats"]:
+            if item["keyword"] == current_keyword and task.get("status") in ("starting", "running"):
+                item["status"] = "当前"
+    finally:
+        conn.close()
+    return summary
+
+
+@app.route("/api/crawl-tasks/active-summary")
+def api_active_crawl_task_summary():
+    from crawl_task_manager import list_crawl_tasks
+
+    tasks = list_crawl_tasks(archived=False)
+    active = next((t for t in tasks if t.get("status") in ("starting", "running")), None)
+    recent = tasks[0] if tasks else None
+    return jsonify({
+        "active_task": _crawl_task_summary(active),
+        "recent_task": _crawl_task_summary(recent) if not active and recent else None,
+        "ts": time.time(),
+    })
 
 
 @app.route("/api/crawl-tasks/<task_id>")
