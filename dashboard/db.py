@@ -215,13 +215,13 @@ def get_crawler_stats(db_conn: sqlite3.Connection, keywords: list) -> dict:
 
 
 def get_velocity(db_conn: sqlite3.Connection, keywords: list,
-                 granularity: str = "minute", hours: int = 6) -> dict:
+                 granularity: str = "minute", minutes: int = 180) -> dict:
     if not keywords:
         return {"granularity": granularity, "data": [], "speed": {"posts": 0, "comments": 0}}
 
     cur = db_conn.cursor()
     ph = _kw_placeholders(keywords)
-    cutoff = int(time.time() * 1000) - hours * 3600 * 1000
+    cutoff = int(time.time() * 1000) - minutes * 60 * 1000
 
     if granularity == "minute":
         div = 60000

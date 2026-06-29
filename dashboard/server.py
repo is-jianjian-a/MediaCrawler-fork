@@ -514,7 +514,11 @@ def api_velocity():
         return jsonify({"minute": {"data": [], "speed": {"posts": 0, "comments": 0}},
                          "hour": {"data": [], "speed": {"posts": 0, "comments": 0}}})
     try:
-        minute = get_velocity(conn, keywords, "minute", 3)
+        # 支持自定义分钟数，默认180（3小时）
+        minutes = request.args.get("minutes", 180, type=int)
+        minutes = max(1, min(minutes, 1440))  # clamp 1-1440
+        
+        minute = get_velocity(conn, keywords, "minute", minutes)
         hour = get_velocity(conn, keywords, "hour", 72)
         return jsonify({"minute": minute, "hour": hour})
     finally:

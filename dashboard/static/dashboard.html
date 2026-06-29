@@ -546,10 +546,14 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
       <div class="metric"><span style="color:var(--text-3);font-size:11px">当前视图</span> <b style="font-size:12px">关键词组筛选</b><span style="font-size:11px;color:var(--text-3)"> · 非运行任务</span></div>
       <div class="metric" style="margin-left:auto;display:flex;align-items:center;gap:8px">
         <span style="color:var(--text-3);font-size:11px">趋势</span>
-        <div class="seg">
+        <div class="seg" id="histSeg">
+          <button id="hist15m" onclick="updateHistory(15)">15m</button>
+          <button id="hist30m" onclick="updateHistory(30)">30m</button>
           <button id="hist1h" onclick="updateHistory(60)">1h</button>
           <button id="hist3h" class="active" onclick="updateHistory(180)">3h</button>
+          <button id="hist6h" onclick="updateHistory(360)">6h</button>
           <button id="hist12h" onclick="updateHistory(720)">12h</button>
+          <button id="hist24h" onclick="updateHistory(1440)">24h</button>
         </div>
       </div>
     </div>
@@ -668,9 +672,18 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
   </div>
 
   <div class="section">
-    <div class="section-head">
-      <div class="section-title">采集速率</div>
-      <div class="section-sub">每分钟新增量 · 各自独立坐标轴 · 最近 90 分钟 · 一图只看一件事</div>
+    <div class="section-head" style="display:flex;justify-content:space-between;align-items:center">
+      <div>
+        <div class="section-title">采集速率</div>
+        <div class="section-sub">每分钟新增量 · 各自独立坐标轴 · <span id="velRangeTag">最近 90 分钟</span> · 一图只看一件事</div>
+      </div>
+      <div class="seg" id="velSeg">
+        <button id="vel15m" onclick="updateVelocity(15)">15m</button>
+        <button id="vel30m" onclick="updateVelocity(30)">30m</button>
+        <button id="vel1h" onclick="updateVelocity(60)">1h</button>
+        <button id="vel2h" onclick="updateVelocity(120)">2h</button>
+        <button id="vel3h" class="active" onclick="updateVelocity(180)">3h</button>
+      </div>
     </div>
     <div class="chart-grid">
       <div class="card chart-box">
@@ -1165,7 +1178,7 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
    State & helpers
    ============================================================ */
 let trendChart=null, postRateChart=null, commentRateChart=null, autoRefresh=true;
-let _worthPosts=[], _groups=[], _activeGroup='', _historyMinutes=180;
+let _worthPosts=[], _groups=[], _activeGroup='', _historyMinutes=180, _velocityMinutes=180;
 let _taskDraftPosts=[], _selectedTaskId='', _showArchivedTasks=false;
 let _crawlPresets=[], _crawlKeywordGroups=[], _selectedCrawlKeywords=new Set(), _selectedCrawlTaskId='', _showArchivedCrawlTasks=false;
 let _crawlMode='standard';
@@ -1425,8 +1438,9 @@ async function loadActiveCrawlTask(){
 /* ============================================================
    Velocity + charts
    ============================================================ */
-async function updateVelocity(){
-  const v=await fetchJSON('/api/velocity');
+async function updateVelocity(minutes){
+  if(minutes!==undefined){ _velocityMinutes=minutes; _highlightVel(_velocityMinutes); }
+  const v=await fetchJSON('/api/velocity?minutes='+_velocityMinutes);
   const min=v.minute;
   document.getElementById('liveSpeed').textContent = min.speed.posts+'帖 '+min.speed.comments+'评';
   document.getElementById('kpiSpeed').innerHTML = min.speed.posts+'<span style="font-size:15px;color:var(--text-3);font-weight:600">帖</span> · '+min.speed.comments+'<span style="font-size:15px;color:var(--text-3);font-weight:600">评</span>';
@@ -1435,9 +1449,8 @@ async function updateVelocity(){
     return;
   }
 
-  // 最近 90 分钟的分钟级数据 —— 帖子与评论拆成两张独立图，各自独立坐标轴。
-  // 量级差异（评论常是帖子的几十倍）不再互相压制，各自的采集节奏都看得清。
-  const mdata=(min.data||[]).slice(-90);
+  // 动态时间范围 —— 帖子与评论拆成两张独立图，各自独立坐标轴。
+  const mdata=(min.data||[]).slice(-_velocityMinutes);
   const labels=mdata.map(d=>fmtTime(d.ts));
   const mposts=mdata.map(d=>d.posts);
   const mcomments=mdata.map(d=>d.comments);
@@ -1477,12 +1490,18 @@ async function updateVelocity(){
   }
 }
 
-/* history trend (cumulative) */
-function _highlightHist(min){
-  [['hist1h',60],['hist3h',180],['hist12h',720]].forEach(([id,m])=>{
+function _highlightVel(min){
+  [['vel15m',15],['vel30m',30],['vel1h',60],['vel2h',120],['vel3h',180]].forEach(([id,m])=>{
     document.getElementById(id).classList.toggle('active', min===m);
   });
-  document.getElementById('trendTag').textContent = min>=720?'12h':min===60?'1h':'3h';
+  document.getElementById('velRangeTag').textContent = '最近 '+min+' 分钟';
+}
+
+function _highlightHist(min){
+  [['hist15m',15],['hist30m',30],['hist1h',60],['hist3h',180],['hist6h',360],['hist12h',720],['hist24h',1440]].forEach(([id,m])=>{
+    document.getElementById(id).classList.toggle('active', min===m);
+  });
+  document.getElementById('trendTag').textContent = min>=1440?'24h':min>=720?'12h':min>=360?'6h':min>=180?'3h':min>=60?'1h':min>=30?'30m':'15m';
 }
 async function updateHistory(minutes){
   if(minutes!==undefined){ _historyMinutes=minutes; _highlightHist(_historyMinutes); }
