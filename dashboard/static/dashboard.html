@@ -187,6 +187,31 @@ body {
 .section-title .tag { font-size: 10px; font-weight: 600; color: var(--text-3); background: var(--surface-sunken); border: 1px solid var(--border); padding: 2px 7px; border-radius: 999px; }
 .section-sub { font-size: 11px; color: var(--text-3); }
 
+/* ---------- primary workspace navigation ---------- */
+.main-view-nav { display:grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.main-view-btn {
+  text-align:left; border:1px solid var(--border); background:var(--surface); border-radius:var(--r-md);
+  padding:14px 16px; cursor:pointer; font-family:inherit; color:var(--text);
+  box-shadow:var(--shadow-xs); transition:border-color .15s, box-shadow .15s, transform .15s, background .15s;
+}
+.main-view-btn:hover { border-color:var(--border-strong); box-shadow:var(--shadow-sm); transform:translateY(-1px); }
+.main-view-btn.active { border-color:var(--brand-border); background:linear-gradient(180deg,#fff,var(--brand-soft)); box-shadow:0 8px 24px rgba(255,36,66,.08); }
+.main-view-kicker { font-size:10px; font-weight:800; letter-spacing:.08em; color:var(--text-3); text-transform:uppercase; }
+.main-view-title { margin-top:4px; font-size:15px; font-weight:760; letter-spacing:-.015em; }
+.main-view-desc { margin-top:4px; font-size:11px; color:var(--text-3); line-height:1.45; }
+body[data-main-view="monitor"] .view-crawl,
+body[data-main-view="monitor"] .view-workbench,
+body[data-main-view="crawl"] .view-monitor,
+body[data-main-view="comment"] .view-monitor,
+body[data-main-view="comment"] .view-crawl { display:none; }
+body[data-main-view="crawl"] #tabWorth,
+body[data-main-view="crawl"] #tabTask,
+body[data-main-view="comment"] #tabCrawl,
+body[data-main-view="comment"] #tabFreshCrawl { display:none; }
+body[data-main-view="crawl"] .view-workbench,
+body[data-main-view="comment"] .view-workbench { display:block; }
+@media(max-width:880px){ .main-view-nav{grid-template-columns:1fr;} }
+
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-md); box-shadow: var(--shadow-xs); }
 .card-pad { padding: 16px 18px; }
 
@@ -499,7 +524,7 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
 ::-webkit-scrollbar-thumb:hover { background: #c4c4c0; }
 </style>
 </head>
-<body>
+<body data-main-view="monitor">
 
 <!-- ============ TOP BAR ============ -->
 <div class="topbar">
@@ -543,7 +568,7 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
       <div class="metric"><span style="color:var(--text-3);font-size:11px">上次写入</span> <b id="lastWrite" style="font-size:12px">--</b></div>
       <div class="metric"><span style="color:var(--text-3);font-size:11px">活跃关键词</span> <b id="activeKw" style="font-size:12px">--</b></div>
       <div class="metric"><span style="color:var(--text-3);font-size:11px">实时速度</span> <b id="liveSpeed" style="font-size:12px;color:var(--brand)">--</b></div>
-      <div class="metric"><span style="color:var(--text-3);font-size:11px">当前视图</span> <b style="font-size:12px">关键词组筛选</b><span style="font-size:11px;color:var(--text-3)"> · 非运行任务</span></div>
+      <div class="metric"><span style="color:var(--text-3);font-size:11px">监控口径</span> <b style="font-size:12px">关键词组筛选</b><span style="font-size:11px;color:var(--text-3)"> · 只影响数据监控</span></div>
       <div class="metric" style="margin-left:auto;display:flex;align-items:center;gap:8px">
         <span style="color:var(--text-3);font-size:11px">趋势</span>
         <div class="seg" id="histSeg">
@@ -559,8 +584,29 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
     </div>
   </div>
 
+  <!-- ============ PRIMARY WORKSPACE NAV ============ -->
+  <div class="section" style="margin-top:14px">
+    <div class="main-view-nav" aria-label="Dashboard 主视角">
+      <button class="main-view-btn active" id="mainViewMonitor" onclick="switchMainView('monitor')">
+        <div class="main-view-kicker">Monitor</div>
+        <div class="main-view-title">数据监控</div>
+        <div class="main-view-desc">看关键词组口径的库内数据、趋势、速率、最新动态和全局日志。</div>
+      </button>
+      <button class="main-view-btn" id="mainViewCrawl" onclick="switchMainView('crawl')">
+        <div class="main-view-kicker">Crawl</div>
+        <div class="main-view-title">抓帖任务</div>
+        <div class="main-view-desc">创建关键词抓帖、从新到旧任务，查看当前运行任务和任务日志。</div>
+      </button>
+      <button class="main-view-btn" id="mainViewComment" onclick="switchMainView('comment')">
+        <div class="main-view-kicker">Comments</div>
+        <div class="main-view-title">评论补抓</div>
+        <div class="main-view-desc">从高价值帖子创建补抓任务，管理评论补抓进度和失败重试。</div>
+      </button>
+    </div>
+  </div>
+
   <!-- ============ KPI ============ -->
-  <div class="section">
+  <div class="section view-monitor">
     <div class="kpi-grid">
       <div class="kpi accent-red">
         <span class="kpi-accent"></span>
@@ -602,7 +648,7 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
   </div>
 
   <!-- ============ ACTIVE CRAWL TASK ============ -->
-  <div class="section">
+  <div class="section view-crawl">
     <div class="section-head">
       <div class="section-title">当前运行任务 <span class="tag">任务视图</span></div>
       <div class="section-sub">独立于关键词组监控 · 展示正在运行的抓帖任务</div>
@@ -641,7 +687,7 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
   </div>
 
   <!-- ============ PROGRESS BANNER ============ -->
-  <div class="section">
+  <div class="section view-monitor">
     <div class="card progress-card">
       <div class="progress-row">
         <div class="plabel"><span style="width:8px;height:8px;border-radius:3px;background:var(--brand);display:inline-block"></span>帖子</div>
@@ -657,7 +703,7 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
   </div>
 
   <!-- ============ CHARTS ============ -->
-  <div class="section">
+  <div class="section view-monitor">
     <div class="section-head">
       <div class="section-title">采集趋势 <span class="tag" id="trendTag">3h</span></div>
       <div class="section-sub">累计帖子与评论随时间变化</div>
@@ -671,7 +717,7 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
     </div>
   </div>
 
-  <div class="section">
+  <div class="section view-monitor">
     <div class="section-head" style="display:flex;justify-content:space-between;align-items:center">
       <div>
         <div class="section-title">采集速率</div>
@@ -704,7 +750,7 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
   </div>
 
   <!-- ============ KEYWORD TABLE ============ -->
-  <div class="section">
+  <div class="section view-monitor">
     <div class="section-head">
       <div class="section-title">关键词进度</div>
       <div class="section-sub" id="kwTableSub">--</div>
@@ -722,16 +768,16 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
   </div>
 
   <!-- ============ WORTH + TASKS (TABS) ============ -->
-  <div class="section">
+  <div class="section view-workbench">
     <div class="card" style="overflow:hidden">
       <div class="tabs">
         <button class="tab active" id="tabWorth" onclick="switchTab('worth')">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3z"/></svg>
-          值得深挖 <span class="badge" id="worthBadge">0</span>
+          高价值帖子 <span class="badge" id="worthBadge">0</span>
         </button>
         <button class="tab" id="tabCrawl" onclick="switchTab('crawl')">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 4h18"/><path d="M8 4v16"/><path d="M16 4v16"/><path d="M3 12h18"/><path d="M3 20h18"/></svg>
-          抓帖任务 <span class="badge" id="crawlBadge">0</span>
+          关键词抓帖 <span class="badge" id="crawlBadge">0</span>
         </button>
         <button class="tab" id="tabFreshCrawl" onclick="switchTab('fresh')">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 8v5l3 2"/><circle cx="12" cy="12" r="9"/><path d="M3 3v5h5"/></svg>
@@ -739,7 +785,7 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
         </button>
         <button class="tab" id="tabTask" onclick="switchTab('task')">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
-          评论补抓 <span class="badge" id="taskBadge">0</span>
+          补抓任务 <span class="badge" id="taskBadge">0</span>
         </button>
       </div>
 
@@ -1135,7 +1181,7 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
   </div>
 
   <!-- ============ ACTIVITY FEED + LOGS ============ -->
-  <div class="section">
+  <div class="section view-monitor">
     <div class="chart-grid">
       <!-- activity feed -->
       <div class="card" id="activityPanel">
@@ -2446,6 +2492,27 @@ async function showTaskDetail(taskId, keepScroll){
 /* ============================================================
    Tabs
    ============================================================ */
+function switchMainView(view){
+  const next = ['monitor','crawl','comment'].includes(view) ? view : 'monitor';
+  document.body.dataset.mainView = next;
+  document.getElementById('mainViewMonitor').classList.toggle('active', next==='monitor');
+  document.getElementById('mainViewCrawl').classList.toggle('active', next==='crawl');
+  document.getElementById('mainViewComment').classList.toggle('active', next==='comment');
+
+  if(next==='crawl'){
+    const crawlActive=document.getElementById('panelCrawl').classList.contains('active');
+    if(!crawlActive) switchTab('crawl');
+    loadActiveCrawlTask();
+    loadCrawlTasks();
+  }else if(next==='comment'){
+    const commentActive=document.getElementById('panelWorth').classList.contains('active') || document.getElementById('panelTask').classList.contains('active');
+    if(!commentActive) switchTab('worth');
+    loadTasks();
+  }else{
+    refreshAll();
+  }
+}
+
 function switchTab(name){
   const isWorth = name==='worth';
   const isCrawl = name==='crawl';
