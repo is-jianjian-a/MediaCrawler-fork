@@ -340,6 +340,80 @@ def get_db_size_mb():
     return 0
 
 
+def get_crawl_task_health():
+    """Return task-aware crawler health for dashboard status labels.
+
+    The dashboard used to mark a crawler as failed solely from "minutes since
+    last DB write". That is wrong when a dashboard-created crawl task has
+    already completed successfully. Task state is the authoritative source
+    here; write gap is only a liveness signal while a task is running.
+    """
+    try:
+        from crawl_task_manager import list_crawl_tasks
+        tasks = list_crawl_tasks(archived=False)
+    except Exception:
+        return {
+            "status": "unknown",
+            "label": "状态未知",
+            "color": "warning",
+            "active_task": None,
+            "recent_task": None,
+        }
+
+    active = next((t for t in tasks if t.get("status") in ("starting", "running")), None)
+    recent = tasks[0] if tasks else None
+    task = active or recent
+    if not task:
+        return {
+            "status": "idle",
+            "label": "空闲",
+            "color": "ok",
+            "active_task": None,
+            "recent_task": None,
+        }
+
+    status = task.get("status")
+    if active:
+        return {
+            "status": status,
+            "label": "运行中" if status == "running" else "启动中",
+            "color": "ok" if status == "running" else "warning",
+            "active_task": active,
+            "recent_task": recent,
+        }
+    if status == "completed":
+        return {
+            "status": "completed",
+            "label": "任务已完成",
+            "color": "ok",
+            "active_task": None,
+            "recent_task": recent,
+        }
+    if status == "failed":
+        return {
+            "status": "failed",
+            "label": "任务失败",
+            "color": "error",
+            "active_task": None,
+            "recent_task": recent,
+        }
+    if status == "pending":
+        return {
+            "status": "pending",
+            "label": "待启动",
+            "color": "warning",
+            "active_task": None,
+            "recent_task": recent,
+        }
+    return {
+        "status": status or "unknown",
+        "label": status or "状态未知",
+        "color": "warning",
+        "active_task": None,
+        "recent_task": recent,
+    }
+
+
 def init_dashboard_db():
     os.makedirs(os.path.dirname(DASHBOARD_DB), exist_ok=True)
     conn = sqlite3.connect(DASHBOARD_DB)
@@ -444,19 +518,27 @@ def api_stats():
     db_size = get_db_size_mb()
 
     health_ts = max(stats.get("last_crawl_ts", 0) or 0, stats.get("global_last_crawl_ts", 0) or 0)
-    if alive:
-        if health_ts == 0:
-            verdict, vcolor = "🟡 等待首次写入", "warning"
-        else:
-            gap = (time.time() * 1000 - health_ts) / 1000
-            if gap < 300:
-                verdict, vcolor = "🟢 正常", "ok"
-            elif gap < 600:
-                verdict, vcolor = "🟡 缓慢", "warning"
-            else:
-                verdict, vcolor = f"🔴 故障（{gap/60:.0f}分钟无写入）", "error"
-    else:
-        verdict, vcolor = "🔴 进程已退出", "error"
+    last_write_gap = (time.time() * 1000 - health_ts) / 1000 if health_ts else None
+    task_health = get_crawl_task_health()
+    active_task = task_health.get("active_task")
+    recent_task = task_health.get("recent_task")
+
+    # Overall verdict: task status first; write gap only matters while a task is active.
+    verdict = task_health["label"]
+    vcolor = task_health["color"]
+    if active_task:
+        worker_pid = active_task.get("worker_pid")
+        worker_alive = _pid_alive(worker_pid) if worker_pid else alive
+        if active_task.get("status") == "running" and not worker_alive:
+            verdict, vcolor = "任务进程丢失", "error"
+        elif not health_ts:
+            verdict, vcolor = "启动中，等待首次写入", "warning"
+        elif last_write_gap is not None and last_write_gap >= 1800:
+            verdict, vcolor = f"运行停滞（{last_write_gap/60:.0f}分钟无写入）", "error"
+        elif last_write_gap is not None and last_write_gap >= 600:
+            verdict, vcolor = f"运行中（{last_write_gap/60:.0f}分钟无写入）", "warning"
+    elif recent_task and recent_task.get("status") == "completed":
+        verdict, vcolor = "任务已完成", "ok"
 
     # Build keyword table rows (merged from /api/keywords)
     details = stats.get("keyword_details", {})
@@ -474,6 +556,13 @@ def api_stats():
         "ts": time.time(),
         "verdict": verdict,
         "verdict_color": vcolor,
+        "health": {
+            "status": task_health["status"],
+            "last_write_seconds_ago": last_write_gap,
+            "active_task_id": active_task.get("id") if active_task else None,
+            "recent_task_id": recent_task.get("id") if recent_task else None,
+            "recent_task_status": recent_task.get("status") if recent_task else None,
+        },
         "process": {"alive": alive, "uptime": uptime, "cpu": cpu, "rss_mb": rss_mb, "platform": platform},
         "stats": stats,
         "keywords": keywords,
@@ -635,21 +724,33 @@ def api_health():
         finally:
             conn.close()
     alive, _, _, _, platform = get_process_info()
+    task_health = get_crawl_task_health()
+    active_task = task_health.get("active_task")
+    recent_task = task_health.get("recent_task")
 
-    status = "ok"
+    status = task_health["status"]
     if not db_ok:
         status = "db_disconnected"
-    elif not alive:
-        status = "crawler_down"
-    elif last_write and last_write > 600:
-        status = "stalled"
+    elif active_task:
+        if active_task.get("status") == "running" and active_task.get("worker_pid") and not _pid_alive(active_task.get("worker_pid")):
+            status = "worker_lost"
+        elif last_write and last_write > 1800:
+            status = "stalled"
+        elif last_write and last_write > 600:
+            status = "slow"
+    elif not recent_task:
+        status = "idle"
 
     return jsonify({
         "status": status,
+        "label": task_health["label"],
         "db_connected": db_ok,
         "crawler_alive": alive,
         "crawler_platform": platform,
         "last_write_seconds_ago": last_write,
+        "active_task_id": active_task.get("id") if active_task else None,
+        "recent_task_id": recent_task.get("id") if recent_task else None,
+        "recent_task_status": recent_task.get("status") if recent_task else None,
     })
 
 
@@ -791,9 +892,9 @@ def api_create_task():
     if len(posts) > 100:
         return jsonify({"error": "a task may contain at most 100 posts"}), 400
     try:
-        browser_mode = str(config.get("browser_mode", "standard") or "standard")
+        browser_mode = str(config.get("browser_mode", "cdp_optional") or "cdp_optional")
         if browser_mode not in ("standard", "cdp_optional", "cdp_required"):
-            browser_mode = "standard"
+            browser_mode = "cdp_optional"
         user_data_dir = str(config.get("user_data_dir", "%s_user_data_dir_account02") or "%s_user_data_dir_account02").strip()
         if not user_data_dir:
             user_data_dir = "%s_user_data_dir_account02"
@@ -856,9 +957,16 @@ def _launch_comment_task(task_id, retry_failed=False):
         worker_env = os.environ.copy()
         enable_cdp = bool(task_config.get("enable_cdp"))
         require_cdp = bool(task_config.get("require_cdp"))
+        if enable_cdp:
+            cdp_status = start_cdp_chrome()
+            if not cdp_status.get("ok") and require_cdp:
+                fail_task_start(task_id, cdp_status.get("error") or "CDP Chrome unavailable")
+                return jsonify({"error": cdp_status}), 500
         worker_env["MEDIACRAWLER_ENABLE_CDP"] = "true" if enable_cdp else "false"
         worker_env["MEDIACRAWLER_REQUIRE_CDP"] = "true" if require_cdp else "false"
         worker_env["MEDIACRAWLER_CDP_DEBUG_PORT"] = str(task_config.get("cdp_debug_port", 9222))
+        worker_env["MEDIACRAWLER_AUTO_CLOSE_BROWSER"] = "false"
+        worker_env["MEDIACRAWLER_CDP_CONNECT_EXISTING"] = "true"
         worker = subprocess.Popen(
             command,
             cwd=MEDIACRAWLER_ROOT,
@@ -1065,9 +1173,9 @@ def _normalize_crawl_keywords(raw_keywords):
 
 def _normalize_crawl_config(config):
     config = config or {}
-    browser_mode = str(config.get("browser_mode", "standard") or "standard")
+    browser_mode = str(config.get("browser_mode", "cdp_optional") or "cdp_optional")
     if browser_mode not in ("standard", "cdp_optional", "cdp_required"):
-        browser_mode = "standard"
+        browser_mode = "cdp_optional"
     note_type = str(config.get("note_type", "all") or "all")
     if note_type not in ("all", "video", "image"):
         note_type = "all"
@@ -1365,12 +1473,21 @@ def api_create_crawl_task():
 
 
 def _launch_crawl_task(task_id):
-    from crawl_task_manager import claim_crawl_task, fail_crawl_task_start, set_crawl_worker_pid
+    from crawl_task_manager import claim_crawl_task, fail_crawl_task_start, get_crawl_task, set_crawl_worker_pid
 
     claimed, error = claim_crawl_task(task_id)
     if not claimed:
         status = 404 if error == "task not found" else 409
         return jsonify({"error": error}), status
+    task = get_crawl_task(task_id) or {}
+    task_config = task.get("config") or {}
+    enable_cdp = bool(task_config.get("enable_cdp"))
+    require_cdp = bool(task_config.get("require_cdp"))
+    if enable_cdp:
+        cdp_status = start_cdp_chrome()
+        if not cdp_status.get("ok") and require_cdp:
+            fail_crawl_task_start(task_id, cdp_status.get("error") or "CDP Chrome unavailable")
+            return jsonify({"error": cdp_status}), 500
     uv = shutil.which("uv")
     command = ([uv, "run", "python"] if uv else [sys.executable]) + [
         os.path.join(DASHBOARD_DIR, "crawl_runner.py"),

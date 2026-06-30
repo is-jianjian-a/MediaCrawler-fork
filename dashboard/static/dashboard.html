@@ -545,14 +545,6 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
       </div>
     </div>
 
-    <div class="group-ctrl">
-      <span class="group-label">关键词组</span>
-      <select class="select" id="groupSelect" onchange="switchGroup()"><option value="">加载中…</option></select>
-      <input class="input" id="groupNameInput" placeholder="新组名" />
-      <button class="btn btn-sm" onclick="saveCurrentGroup()">保存当前</button>
-      <button class="btn btn-sm btn-danger" onclick="deleteCurrentGroup()" title="删除当前组">删除</button>
-    </div>
-
     <div class="topbar-spacer"></div>
 
     <span class="verdict-pill" id="verdictPill"><span class="dot"></span><span id="verdictText">检测中</span></span>
@@ -569,12 +561,20 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
 <div class="wrap">
 
   <!-- ============ STATUS META STRIP ============ -->
-  <div class="section" style="margin-top:20px">
+  <div class="section view-monitor" style="margin-top:20px">
     <div class="card card-pad" style="display:flex;gap:24px;flex-wrap:wrap;align-items:center">
-      <div class="metric"><span style="color:var(--text-3);font-size:11px">进程</span> <b id="procState" style="font-size:12px">--</b></div>
+      <div class="group-ctrl" style="width:100%;padding-bottom:12px;border-bottom:1px solid var(--hairline)">
+        <span class="group-label">数据监控关键词组</span>
+        <select class="select" id="groupSelect" onchange="switchGroup()"><option value="">加载中…</option></select>
+        <input class="input" id="groupNameInput" placeholder="新组名" />
+        <button class="btn btn-sm" onclick="saveCurrentGroup()">保存当前</button>
+        <button class="btn btn-sm btn-danger" onclick="deleteCurrentGroup()" title="删除当前组">删除</button>
+        <span style="font-size:11px;color:var(--text-3)">只影响本页 KPI / 趋势 / 关键词进度，不控制抓帖任务。</span>
+      </div>
+      <div class="metric"><span style="color:var(--text-3);font-size:11px">采集进程</span> <b id="procState" style="font-size:12px">--</b></div>
       <div class="metric"><span style="color:var(--text-3);font-size:11px">运行时长</span> <b id="procUptime" style="font-size:12px">--</b></div>
       <div class="metric"><span style="color:var(--text-3);font-size:11px">上次写入</span> <b id="lastWrite" style="font-size:12px">--</b></div>
-      <div class="metric"><span style="color:var(--text-3);font-size:11px">活跃关键词</span> <b id="activeKw" style="font-size:12px">--</b></div>
+      <div class="metric"><span style="color:var(--text-3);font-size:11px">最近写入关键词</span> <b id="activeKw" style="font-size:12px">--</b></div>
       <div class="metric"><span style="color:var(--text-3);font-size:11px">实时速度</span> <b id="liveSpeed" style="font-size:12px;color:var(--brand)">--</b></div>
       <div class="metric monitor-only"><span style="color:var(--text-3);font-size:11px">监控口径</span> <b style="font-size:12px">关键词组筛选</b><span style="font-size:11px;color:var(--text-3)"> · 只影响数据监控</span></div>
       <div class="metric monitor-only" style="margin-left:auto;display:flex;align-items:center;gap:8px">
@@ -893,11 +893,11 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
                 <div class="field">
                   <label>浏览器通信模式</label>
                   <select class="select" id="taskBrowserMode">
-                    <option value="standard">标准模式（默认）</option>
-                    <option value="cdp_optional">CDP 可用则用</option>
+                    <option value="standard">标准模式</option>
+                    <option value="cdp_optional" selected>CDP 可用则用（默认）</option>
                     <option value="cdp_required">必须 CDP</option>
                   </select>
-                  <div class="field-help">标准模式最省心；必须 CDP 时如果连接不上会启动失败。</div>
+                  <div class="field-help">默认优先复用常驻 CDP 浏览器；必须 CDP 时如果连接不上会启动失败。</div>
                 </div>
                 <div class="field">
                   <label>CDP 端口</label>
@@ -1122,10 +1122,10 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
                     <label>浏览器模式</label>
                     <select class="select" id="crawlBrowserMode">
                       <option value="standard">标准模式</option>
-                      <option value="cdp_optional">CDP 可用则用</option>
+                      <option value="cdp_optional" selected>CDP 可用则用（默认）</option>
                       <option value="cdp_required">必须 CDP</option>
                     </select>
-                    <div class="field-help">你前面要求不强判 CDP，默认标准模式。</div>
+                    <div class="field-help">默认优先复用常驻 CDP 浏览器；连接不上会回退标准模式。</div>
                   </div>
                   <div class="field">
                     <label>CDP 端口</label>
@@ -1323,12 +1323,22 @@ function chartOpts(extra){
 async function updateStats(){
   const s=await fetchJSON('/api/stats');
   const st=s.stats, p=s.process;
+  const health=s.health||{};
 
   // verdict
   setVerdict(s.verdict_color, s.verdict.replace(/^[🟢🟡🔴]\s*/,''));
 
-  document.getElementById('procState').innerHTML = p.alive
-    ? '<span style="color:var(--green)">● 运行中</span>' : '<span style="color:var(--red)">● 已退出</span>';
+  let procHtml='<span style="color:var(--text-3)">● 空闲</span>';
+  if(health.active_task_id){
+    procHtml = p.alive
+      ? '<span style="color:var(--green)">● 运行中</span>'
+      : '<span style="color:var(--red)">● 进程丢失</span>';
+  }else if(health.recent_task_status==='failed'){
+    procHtml='<span style="color:var(--red)">● 任务失败</span>';
+  }else if(p.alive){
+    procHtml='<span style="color:var(--amber)">● 有进程</span>';
+  }
+  document.getElementById('procState').innerHTML = procHtml;
   document.getElementById('procUptime').textContent = p.uptime||'--';
   document.getElementById('lastWrite').textContent = fmtGap(((st.global_last_crawl_ts||st.last_crawl_ts||0)/1000));
   document.getElementById('activeKw').textContent = st.active_keyword||'--';
