@@ -188,17 +188,18 @@ body {
 .section-sub { font-size: 11px; color: var(--text-3); }
 
 /* ---------- primary workspace navigation ---------- */
-.main-view-nav { display:grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.main-view-nav { display:grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .main-view-btn {
   text-align:left; border:1px solid var(--border); background:var(--surface); border-radius:var(--r-md);
-  padding:14px 16px; cursor:pointer; font-family:inherit; color:var(--text);
+  padding:9px 12px; cursor:pointer; font-family:inherit; color:var(--text);
+  display:flex; align-items:center; gap:10px; min-height:42px;
   box-shadow:var(--shadow-xs); transition:border-color .15s, box-shadow .15s, transform .15s, background .15s;
 }
 .main-view-btn:hover { border-color:var(--border-strong); box-shadow:var(--shadow-sm); transform:translateY(-1px); }
 .main-view-btn.active { border-color:var(--brand-border); background:linear-gradient(180deg,#fff,var(--brand-soft)); box-shadow:0 8px 24px rgba(255,36,66,.08); }
-.main-view-kicker { font-size:10px; font-weight:800; letter-spacing:.08em; color:var(--text-3); text-transform:uppercase; }
-.main-view-title { margin-top:4px; font-size:15px; font-weight:760; letter-spacing:-.015em; }
-.main-view-desc { margin-top:4px; font-size:11px; color:var(--text-3); line-height:1.45; }
+.main-view-kicker { font-size:9px; font-weight:800; letter-spacing:.08em; color:var(--text-3); text-transform:uppercase; min-width:64px; }
+.main-view-title { font-size:14px; font-weight:760; letter-spacing:-.015em; white-space:nowrap; }
+.main-view-desc { display:none; }
 body[data-main-view="monitor"] .view-crawl,
 body[data-main-view="monitor"] .view-workbench,
 body[data-main-view="crawl"] .view-monitor,
@@ -210,6 +211,9 @@ body[data-main-view="comment"] #tabCrawl,
 body[data-main-view="comment"] #tabFreshCrawl { display:none; }
 body[data-main-view="crawl"] .view-workbench,
 body[data-main-view="comment"] .view-workbench { display:block; }
+body[data-main-view="crawl"] .monitor-only,
+body[data-main-view="comment"] .monitor-only { display:none !important; }
+body[data-main-view="crawl"] .view-workbench { margin-top:14px; }
 @media(max-width:880px){ .main-view-nav{grid-template-columns:1fr;} }
 
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-md); box-shadow: var(--shadow-xs); }
@@ -434,6 +438,10 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
 .active-task-log .lvl-INFO { color:#e5e7eb; }
 .active-task-log .lvl-WARNING { color:#fbbf24; }
 .active-task-log .lvl-ERROR { color:#f87171; }
+.active-task-card.compact .active-task-body { display:none; }
+.active-task-card.compact .active-task-grid { border-bottom:none; }
+.active-task-card.compact .active-task-head { padding-bottom:10px; }
+.active-task-card.compact .active-task-grid { padding-top:10px; padding-bottom:12px; }
 @media(max-width:1180px){ .active-task-grid{grid-template-columns:repeat(3,1fr);} .active-task-body{grid-template-columns:1fr;} .active-task-keywords{border-right:none;border-bottom:1px solid var(--hairline);} }
 @media(max-width:680px){ .active-task-grid{grid-template-columns:repeat(2,1fr);} .active-task-head{flex-direction:column;} }
 
@@ -568,8 +576,8 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
       <div class="metric"><span style="color:var(--text-3);font-size:11px">上次写入</span> <b id="lastWrite" style="font-size:12px">--</b></div>
       <div class="metric"><span style="color:var(--text-3);font-size:11px">活跃关键词</span> <b id="activeKw" style="font-size:12px">--</b></div>
       <div class="metric"><span style="color:var(--text-3);font-size:11px">实时速度</span> <b id="liveSpeed" style="font-size:12px;color:var(--brand)">--</b></div>
-      <div class="metric"><span style="color:var(--text-3);font-size:11px">监控口径</span> <b style="font-size:12px">关键词组筛选</b><span style="font-size:11px;color:var(--text-3)"> · 只影响数据监控</span></div>
-      <div class="metric" style="margin-left:auto;display:flex;align-items:center;gap:8px">
+      <div class="metric monitor-only"><span style="color:var(--text-3);font-size:11px">监控口径</span> <b style="font-size:12px">关键词组筛选</b><span style="font-size:11px;color:var(--text-3)"> · 只影响数据监控</span></div>
+      <div class="metric monitor-only" style="margin-left:auto;display:flex;align-items:center;gap:8px">
         <span style="color:var(--text-3);font-size:11px">趋势</span>
         <div class="seg" id="histSeg">
           <button id="hist15m" onclick="updateHistory(15)">15m</button>
@@ -653,7 +661,7 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
       <div class="section-title">当前运行任务 <span class="tag">任务视图</span></div>
       <div class="section-sub">独立于关键词组监控 · 展示正在运行的抓帖任务</div>
     </div>
-    <div class="card active-task-card" id="activeTaskCard">
+    <div class="card active-task-card compact" id="activeTaskCard">
       <div class="active-task-head">
         <div>
           <div class="active-task-title">
@@ -662,7 +670,10 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
           </div>
           <div class="active-task-sub" id="activeTaskSub">当前面板按运行中任务关键词统计，不受 active keyword group 影响。</div>
         </div>
-        <button class="btn btn-sm" onclick="loadActiveCrawlTask()">刷新当前任务</button>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button class="btn btn-sm" id="activeTaskDetailBtn" onclick="toggleActiveTaskDetail()">展开关键词/日志</button>
+          <button class="btn btn-sm" onclick="loadActiveCrawlTask()">刷新当前任务</button>
+        </div>
       </div>
       <div class="active-task-grid">
         <div class="active-task-metric"><div class="label">任务 ID</div><div class="value mono" id="activeTaskId">--</div><div class="foot" id="activeTaskPid">PID --</div></div>
@@ -1421,6 +1432,14 @@ function renderActiveTaskKeywords(rows, currentKeyword){
     </tr>`;
   }).join('');
 }
+function toggleActiveTaskDetail(){
+  const card=document.getElementById('activeTaskCard');
+  const btn=document.getElementById('activeTaskDetailBtn');
+  if(!card||!btn) return;
+  const compact=card.classList.toggle('compact');
+  btn.textContent=compact?'展开关键词/日志':'收起关键词/日志';
+  containAllScrollAreas(card);
+}
 async function loadActiveCrawlTask(){
   const statusEl=document.getElementById('activeTaskStatus');
   if(statusEl){ statusEl.className='status-chip starting'; statusEl.textContent='刷新中'; }
@@ -1694,19 +1713,25 @@ async function updateCommentStats(){
    Refresh orchestration
    ============================================================ */
 async function refreshAll(){
-  const results = await Promise.allSettled([
-    updateStats(),
-    updateVelocity(),
-    updateHistory(),
-    updateActivity(),
-    updateLogs(),
-    updateCommentStats(),
-    loadActiveCrawlTask(),
-    loadCrawlTasks()
-  ]);
-  const failed = results.filter(r=>r.status==='rejected');
+  const jobs = [
+    ['stats', updateStats()],
+    ['velocity', updateVelocity()],
+    ['history', updateHistory()],
+    ['activity', updateActivity()],
+    ['logs', updateLogs()],
+    ['commentStats', updateCommentStats()],
+    ['activeCrawlTask', loadActiveCrawlTask()],
+    ['crawlTasks', loadCrawlTasks()]
+  ];
+  const results = await Promise.allSettled(jobs.map(j=>j[1]));
+  const failed = results
+    .map((r,i)=>({name:jobs[i][0], result:r}))
+    .filter(x=>x.result.status==='rejected');
   if(failed.length){
-    console.warn('refresh modules failed:', failed.map(r=>r.reason && r.reason.message ? r.reason.message : String(r.reason)));
+    console.warn('refresh modules failed:', failed.map(x=>{
+      const reason=x.result.reason;
+      return x.name+': '+(reason && reason.message ? reason.message : String(reason));
+    }));
   }
 }
 function manualRefresh(){
@@ -2494,10 +2519,12 @@ async function showTaskDetail(taskId, keepScroll){
    ============================================================ */
 function switchMainView(view){
   const next = ['monitor','crawl','comment'].includes(view) ? view : 'monitor';
+  const prev = document.body.dataset.mainView || 'monitor';
   document.body.dataset.mainView = next;
   document.getElementById('mainViewMonitor').classList.toggle('active', next==='monitor');
   document.getElementById('mainViewCrawl').classList.toggle('active', next==='crawl');
   document.getElementById('mainViewComment').classList.toggle('active', next==='comment');
+  window.scrollTo({top:0, behavior:'smooth'});
 
   if(next==='crawl'){
     const crawlActive=document.getElementById('panelCrawl').classList.contains('active');
@@ -2505,8 +2532,7 @@ function switchMainView(view){
     loadActiveCrawlTask();
     loadCrawlTasks();
   }else if(next==='comment'){
-    const commentActive=document.getElementById('panelWorth').classList.contains('active') || document.getElementById('panelTask').classList.contains('active');
-    if(!commentActive) switchTab('worth');
+    if(prev!=='comment') switchTab('task');
     loadTasks();
   }else{
     refreshAll();
