@@ -126,6 +126,28 @@ body {
 
 .group-ctrl { display: flex; align-items: center; gap: 8px; }
 .group-label { font-size: 11px; color: var(--text-3); font-weight: 500; }
+.source-key-manager { width:100%; padding-bottom:12px; border-bottom:1px solid var(--hairline); }
+.source-key-head { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.source-key-summary { font-size:11px; color:var(--text-3); }
+.source-key-panel { display:none; margin-top:12px; border:1px solid var(--border); border-radius:var(--r-md); background:linear-gradient(180deg,#fff,var(--surface-2)); overflow:hidden; }
+.source-key-panel.open { display:block; }
+.source-key-toolbar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:10px; border-bottom:1px solid var(--hairline); }
+.source-key-list { max-height:360px; overflow:auto; overscroll-behavior:contain; padding:10px; display:grid; grid-template-columns:repeat(auto-fill,minmax(210px,1fr)); gap:8px; background:rgba(255,255,255,.58); }
+.source-key-card { text-align:left; border:1px solid var(--border); background:var(--surface); border-radius:12px; padding:9px 10px; cursor:pointer; font:inherit; color:var(--text); transition:border-color .12s, background .12s, box-shadow .12s, transform .12s; }
+.source-key-card:hover { border-color:var(--border-strong); box-shadow:var(--shadow-xs); transform:translateY(-1px); }
+.source-key-card.selected { border-color:var(--brand-border); background:linear-gradient(180deg,#fff,var(--brand-soft)); box-shadow:0 6px 18px rgba(255,36,66,.08); }
+.source-key-card .sk-top { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.source-key-card .sk-name { font-size:12px; font-weight:740; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.source-key-card .sk-check { width:18px; height:18px; border-radius:50%; border:1px solid var(--border-strong); display:grid; place-items:center; font-size:11px; color:transparent; flex-shrink:0; }
+.source-key-card.selected .sk-check { border-color:var(--brand); background:var(--brand); color:#fff; }
+.source-key-card .sk-meta { margin-top:7px; display:grid; grid-template-columns:repeat(3,1fr); gap:5px; font-size:10px; color:var(--text-3); }
+.source-key-card .sk-meta b { display:block; color:var(--text-2); font-size:11px; }
+.source-key-card .sk-time { margin-top:7px; font-size:10px; color:var(--text-3); }
+.source-key-save-state { font-size:11px; color:var(--text-3); min-width:72px; }
+.source-key-save-state.saving { color:var(--amber); }
+.source-key-save-state.saved { color:var(--green); }
+.source-key-save-state.error { color:var(--red); }
+.source-key-empty { padding:26px 12px; text-align:center; color:var(--text-3); font-size:12px; grid-column:1/-1; }
 .select, .input {
   background: var(--surface); color: var(--text);
   border: 1px solid var(--border); border-radius: var(--r-sm);
@@ -586,13 +608,31 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
   <!-- ============ STATUS META STRIP ============ -->
   <div class="section view-monitor" style="margin-top:20px">
     <div class="card card-pad" style="display:flex;gap:24px;flex-wrap:wrap;align-items:center">
-      <div class="group-ctrl" style="width:100%;padding-bottom:12px;border-bottom:1px solid var(--hairline)">
-        <span class="group-label">数据监控关键词组</span>
-        <select class="select" id="groupSelect" onchange="switchGroup()"><option value="">加载中…</option></select>
-        <input class="input" id="groupNameInput" placeholder="新组名" />
-        <button class="btn btn-sm" onclick="saveCurrentGroup()">保存当前</button>
-        <button class="btn btn-sm btn-danger" onclick="deleteCurrentGroup()" title="删除当前组">删除</button>
-        <span style="font-size:11px;color:var(--text-3)">只影响本页 KPI / 趋势 / 关键词进度，不控制抓帖任务。</span>
+      <div class="source-key-manager">
+        <div class="source-key-head">
+          <span class="group-label">数据监控关键词组</span>
+          <select class="select" id="groupSelect" onchange="switchGroup()"><option value="">加载中…</option></select>
+          <button class="btn btn-sm" id="sourceKeyToggle" onclick="toggleSourceKeyPanel()">展开 source_key</button>
+          <span class="source-key-summary" id="sourceKeySummary">--</span>
+          <span class="source-key-save-state" id="sourceKeySaveState"></span>
+          <span style="font-size:11px;color:var(--text-3)">只影响本页 KPI / 趋势 / 关键词进度，不控制抓帖任务。</span>
+        </div>
+        <div class="source-key-panel" id="sourceKeyPanel">
+          <div class="source-key-toolbar">
+            <input class="input" id="sourceKeySearch" placeholder="搜索 source_key" oninput="renderSourceKeyPicker()" />
+            <select class="select" id="sourceKeySort" onchange="renderSourceKeyPicker()">
+              <option value="latest_desc">最新入库优先</option>
+              <option value="posts_desc">帖子数最多</option>
+              <option value="db_comments_desc">库内评论最多</option>
+              <option value="platform_comments_desc">平台评论最多</option>
+              <option value="name_asc">名称 A-Z</option>
+            </select>
+            <input class="input" id="groupNameInput" placeholder="新常用组名" />
+            <button class="btn btn-sm" onclick="createKeywordGroup()">新建组</button>
+            <button class="btn btn-sm btn-danger" onclick="deleteCurrentGroup()" title="删除当前组">删除当前组</button>
+          </div>
+          <div class="source-key-list" id="sourceKeyList"><div class="source-key-empty">加载 source_key…</div></div>
+        </div>
       </div>
       <div class="metric"><span style="color:var(--text-3);font-size:11px">采集进程</span> <b id="procState" style="font-size:12px">--</b></div>
       <div class="metric"><span style="color:var(--text-3);font-size:11px">运行时长</span> <b id="procUptime" style="font-size:12px">--</b></div>
@@ -1237,7 +1277,7 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
    State & helpers
    ============================================================ */
 let trendChart=null, postRateChart=null, commentRateChart=null, autoRefresh=true;
-let _worthPosts=[], _groups=[], _activeGroup='', _historyMinutes=180, _velocityMinutes=180;
+let _worthPosts=[], _groups=[], _activeGroup=null, _sourceKeys=[], _historyMinutes=180, _velocityMinutes=180;
 let _taskDraftPosts=[], _selectedTaskId='', _showArchivedTasks=false;
 let _crawlPresets=[], _crawlKeywordGroups=[], _selectedCrawlKeywords=new Set(), _selectedCrawlTaskId='', _showArchivedCrawlTasks=false;
 let _crawlMode='standard';
@@ -1304,7 +1344,7 @@ function containWheelScroll(el){
   }, {passive:false});
 }
 function containAllScrollAreas(root=document){
-  root.querySelectorAll('.tbl-wrap,.task-list,.task-detail,.task-log-content,.activity-list,.log-content,.crawl-side,.keyword-textarea,.active-task-keywords,.active-task-log').forEach(containWheelScroll);
+  root.querySelectorAll('.tbl-wrap,.task-list,.task-detail,.task-log-content,.activity-list,.log-content,.crawl-side,.keyword-textarea,.active-task-keywords,.active-task-log,.source-key-list').forEach(containWheelScroll);
 }
 
 /* chart option factory — keeps theme consistent */
@@ -2594,30 +2634,136 @@ function switchTab(name){
 /* ============================================================
    Keyword groups
    ============================================================ */
+function activeGroupKeywords(){
+  return new Set((_activeGroup&&_activeGroup.keywords)||[]);
+}
+function sourceKeyTimestamp(item){
+  const ts=Number(item.latest_add_ts||0);
+  return ts>20000000000 ? Math.floor(ts/1000) : ts;
+}
+function setSourceKeySaveState(text, cls=''){
+  const el=document.getElementById('sourceKeySaveState');
+  if(!el) return;
+  el.className='source-key-save-state '+cls;
+  el.textContent=text||'';
+}
 async function loadGroups(){
   try{
     _groups=await fetchJSON('/api/groups');
     const sel=document.getElementById('groupSelect');
     _activeGroup=_groups.find(g=>g.active);
-    sel.innerHTML=_groups.map(g=>`<option value="${escapeHtml(g.name)}"${g.active?' selected':''}>${escapeHtml(g.name)} · ${g.keywords.length}词</option>`).join('');
+    sel.innerHTML=_groups.map(g=>`<option value="${escapeHtml(g.name)}"${g.active?' selected':''}>${escapeHtml(g.name)} · ${(g.keywords||[]).length}词</option>`).join('');
     if(!_groups.length) sel.innerHTML='<option value="">(无组)</option>';
+    renderSourceKeyPicker();
   }catch(e){
     document.getElementById('groupSelect').innerHTML='<option value="">加载失败</option>';
+  }
+}
+async function loadSourceKeys(){
+  try{
+    const data=await fetchJSON('/api/source-keys');
+    _sourceKeys=data.source_keys||[];
+    renderSourceKeyPicker();
+  }catch(e){
+    const box=document.getElementById('sourceKeyList');
+    if(box) box.innerHTML='<div class="source-key-empty">source_key 加载失败</div>';
+  }
+}
+function toggleSourceKeyPanel(){
+  const panel=document.getElementById('sourceKeyPanel');
+  const btn=document.getElementById('sourceKeyToggle');
+  const open=!panel.classList.contains('open');
+  panel.classList.toggle('open', open);
+  btn.textContent=open?'收起 source_key':'展开 source_key';
+  if(open){
+    loadSourceKeys();
+    setTimeout(()=>containAllScrollAreas(panel),0);
   }
 }
 async function switchGroup(){
   const name=document.getElementById('groupSelect').value;
   await fetch('/api/groups/activate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});
-  refreshAll();
-}
-async function saveCurrentGroup(){
-  const name=document.getElementById('groupNameInput').value.trim();
-  if(!name){ alert('请输入组名'); return; }
-  const s=await fetchJSON('/api/stats');
-  await fetch('/api/groups/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,keywords:s.keywords,max_notes:s.max_notes_per_keyword})});
-  document.getElementById('groupNameInput').value='';
   await loadGroups();
   refreshAll();
+}
+async function createKeywordGroup(){
+  const name=document.getElementById('groupNameInput').value.trim();
+  if(!name){ alert('请输入组名'); return; }
+  const keywords=_activeGroup?(_activeGroup.keywords||[]):[];
+  const maxNotes=_activeGroup?(_activeGroup.max_notes||200):200;
+  setSourceKeySaveState('保存中…','saving');
+  const r=await fetch('/api/groups/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,keywords,max_notes:maxNotes})});
+  if(!r.ok){ setSourceKeySaveState('保存失败','error'); alert('新建组失败'); return; }
+  document.getElementById('groupNameInput').value='';
+  await loadGroups();
+  setSourceKeySaveState('已新建','saved');
+  refreshAll();
+}
+async function saveCurrentGroupKeywords(keywords){
+  if(!_activeGroup){ alert('请先新建一个常用组'); return false; }
+  const name=_activeGroup.name;
+  const maxNotes=_activeGroup.max_notes||200;
+  setSourceKeySaveState('保存中…','saving');
+  const r=await fetch('/api/groups/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,keywords,max_notes:maxNotes})});
+  if(!r.ok){
+    setSourceKeySaveState('保存失败','error');
+    return false;
+  }
+  await loadGroups();
+  setSourceKeySaveState('已保存','saved');
+  refreshAll();
+  return true;
+}
+async function toggleSourceKey(sourceKey){
+  if(!_activeGroup){
+    alert('请先新建一个常用组，再选择 source_key');
+    return;
+  }
+  const selected=activeGroupKeywords();
+  if(selected.has(sourceKey)) selected.delete(sourceKey);
+  else selected.add(sourceKey);
+  _activeGroup.keywords=[...selected];
+  renderSourceKeyPicker();
+  await saveCurrentGroupKeywords(_activeGroup.keywords);
+}
+function renderSourceKeyPicker(){
+  const summary=document.getElementById('sourceKeySummary');
+  if(summary){
+    const selectedCount=((_activeGroup&&_activeGroup.keywords)||[]).length;
+    summary.textContent=(_activeGroup?`当前组 ${selectedCount} 个 · 库内 ${_sourceKeys.length} 个 source_key`:`未选择组 · 库内 ${_sourceKeys.length} 个 source_key`);
+  }
+  const box=document.getElementById('sourceKeyList');
+  if(!box) return;
+  const selected=activeGroupKeywords();
+  const q=(document.getElementById('sourceKeySearch')?.value||'').trim().toLowerCase();
+  const sort=document.getElementById('sourceKeySort')?.value||'latest_desc';
+  let rows=[..._sourceKeys];
+  if(q) rows=rows.filter(it=>(it.source_key||'').toLowerCase().includes(q));
+  rows.sort((a,b)=>{
+    if(sort==='posts_desc') return (b.post_count||0)-(a.post_count||0) || sourceKeyTimestamp(b)-sourceKeyTimestamp(a) || String(a.source_key).localeCompare(String(b.source_key),'zh-CN');
+    if(sort==='db_comments_desc') return (b.db_comment_count||0)-(a.db_comment_count||0) || sourceKeyTimestamp(b)-sourceKeyTimestamp(a) || String(a.source_key).localeCompare(String(b.source_key),'zh-CN');
+    if(sort==='platform_comments_desc') return (b.platform_comment_count||0)-(a.platform_comment_count||0) || sourceKeyTimestamp(b)-sourceKeyTimestamp(a) || String(a.source_key).localeCompare(String(b.source_key),'zh-CN');
+    if(sort==='name_asc') return String(a.source_key).localeCompare(String(b.source_key),'zh-CN');
+    return sourceKeyTimestamp(b)-sourceKeyTimestamp(a) || (b.post_count||0)-(a.post_count||0) || String(a.source_key).localeCompare(String(b.source_key),'zh-CN');
+  });
+  if(!rows.length){
+    box.innerHTML='<div class="source-key-empty">'+(_sourceKeys.length?'没有匹配的 source_key':'库中暂无 source_key')+'</div>';
+    return;
+  }
+  box.innerHTML=rows.map(it=>{
+    const key=it.source_key||'';
+    const isSel=selected.has(key);
+    const encoded=encodeURIComponent(key);
+    return `<button class="source-key-card ${isSel?'selected':''}" onclick="toggleSourceKey(decodeURIComponent('${encoded}'))" title="${escapeHtml(key)}">
+      <div class="sk-top"><span class="sk-name">${escapeHtml(key)}</span><span class="sk-check">✓</span></div>
+      <div class="sk-meta">
+        <span><b>${(it.post_count||0).toLocaleString()}</b>帖子</span>
+        <span><b>${(it.db_comment_count||0).toLocaleString()}</b>库评</span>
+        <span><b>${(it.platform_comment_count||0).toLocaleString()}</b>平台评</span>
+      </div>
+      <div class="sk-time">最新入库 ${fmtDateHour(sourceKeyTimestamp(it))}</div>
+    </button>`;
+  }).join('');
 }
 async function deleteCurrentGroup(){
   const name=document.getElementById('groupSelect').value;
@@ -2655,6 +2801,7 @@ function toggleAutoRefresh(){
    ============================================================ */
 async function init(){
   await loadGroups();
+  await loadSourceKeys();
   containAllScrollAreas();
   refreshAll();
 }

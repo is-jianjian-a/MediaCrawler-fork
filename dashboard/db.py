@@ -79,7 +79,7 @@ def get_config_values():
     try:
         from groups import get_active_group
         keywords, max_notes = get_active_group()
-        if keywords:
+        if keywords is not None:
             return keywords, (max_notes or 200)
     except Exception:
         pass

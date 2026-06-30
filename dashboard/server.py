@@ -1637,14 +1637,60 @@ def api_list_groups():
     return jsonify(list_groups())
 
 
+@app.route("/api/source-keys")
+def api_source_keys():
+    """List all source_keyword values currently stored in crawler DB."""
+    conn = None
+    try:
+        conn = _with_crawler_db()
+        if not conn:
+            return jsonify({"source_keys": []})
+        cur = conn.cursor()
+        cur.execute("""
+            WITH db_comments AS (
+                SELECT n.source_keyword AS source_key, COUNT(c.id) AS db_comment_count
+                FROM xhs_note n
+                JOIN xhs_note_comment c ON c.note_id = n.note_id
+                WHERE COALESCE(TRIM(n.source_keyword), '') != ''
+                GROUP BY n.source_keyword
+            )
+            SELECT
+                n.source_keyword AS source_key,
+                COUNT(*) AS post_count,
+                COALESCE(SUM(n.comment_count), 0) AS platform_comment_count,
+                COALESCE(MAX(n.add_ts), 0) AS latest_add_ts,
+                COALESCE(dc.db_comment_count, 0) AS db_comment_count
+            FROM xhs_note n
+            LEFT JOIN db_comments dc ON dc.source_key = n.source_keyword
+            WHERE COALESCE(TRIM(n.source_keyword), '') != ''
+            GROUP BY n.source_keyword
+            ORDER BY latest_add_ts DESC, post_count DESC, source_key ASC
+        """)
+        rows = []
+        for r in cur.fetchall():
+            rows.append({
+                "source_key": r[0],
+                "post_count": int(r[1] or 0),
+                "platform_comment_count": int(r[2] or 0),
+                "latest_add_ts": int(r[3] or 0),
+                "db_comment_count": int(r[4] or 0),
+            })
+        return jsonify({"source_keys": rows})
+    finally:
+        if conn:
+            conn.close()
+
+
 @app.route("/api/groups/save", methods=["POST"])
 def api_save_group():
     data = request.get_json(force=True)
     name = (data.get("name") or "").strip()
     keywords = data.get("keywords", [])
     max_notes = data.get("max_notes", 200)
-    if not name or not keywords:
-        return jsonify({"error": "name and keywords required"}), 400
+    if not name:
+        return jsonify({"error": "name required"}), 400
+    if not isinstance(keywords, list):
+        return jsonify({"error": "keywords must be a list"}), 400
     save_group(name, keywords, max_notes)
     activate_group(name)
     return jsonify({"ok": True})

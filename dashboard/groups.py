@@ -49,6 +49,8 @@ def get_active_group():
 
 def save_group(name, keywords, max_notes):
     data = _load()
+    if keywords is None:
+        keywords = []
     data["groups"][name] = {"keywords": keywords, "max_notes": max_notes}
     _save(data)
     return True
