@@ -105,6 +105,10 @@ body {
   display: flex; align-items: center; gap: 18px;
   padding: 13px var(--pad);
 }
+.topbar-nav-row {
+  max-width: var(--maxw); margin: 0 auto;
+  padding: 0 var(--pad) 10px;
+}
 .brand { display: flex; align-items: center; gap: 11px; min-width: 0; }
 .brand-mark {
   width: 32px; height: 32px; border-radius: 9px;
@@ -556,6 +560,25 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
       <button class="icon-btn" id="autoBtn" onclick="toggleAutoRefresh()" title="暂停/恢复自动刷新"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg></button>
     </div>
   </div>
+  <div class="topbar-nav-row">
+    <div class="main-view-nav" aria-label="Dashboard 主视角">
+      <button class="main-view-btn active" id="mainViewMonitor" onclick="switchMainView('monitor')">
+        <div class="main-view-kicker">Monitor</div>
+        <div class="main-view-title">数据监控</div>
+        <div class="main-view-desc">看关键词组口径的库内数据、趋势、速率、最新动态和全局日志。</div>
+      </button>
+      <button class="main-view-btn" id="mainViewCrawl" onclick="switchMainView('crawl')">
+        <div class="main-view-kicker">Crawl</div>
+        <div class="main-view-title">抓帖任务</div>
+        <div class="main-view-desc">创建关键词抓帖、从新到旧任务，查看当前运行任务和任务日志。</div>
+      </button>
+      <button class="main-view-btn" id="mainViewComment" onclick="switchMainView('comment')">
+        <div class="main-view-kicker">Comments</div>
+        <div class="main-view-title">评论补抓</div>
+        <div class="main-view-desc">从高价值帖子创建补抓任务，管理评论补抓进度和失败重试。</div>
+      </button>
+    </div>
+  </div>
 </div>
 
 <div class="wrap">
@@ -589,27 +612,6 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
           <button id="hist24h" onclick="updateHistory(1440)">24h</button>
         </div>
       </div>
-    </div>
-  </div>
-
-  <!-- ============ PRIMARY WORKSPACE NAV ============ -->
-  <div class="section" style="margin-top:14px">
-    <div class="main-view-nav" aria-label="Dashboard 主视角">
-      <button class="main-view-btn active" id="mainViewMonitor" onclick="switchMainView('monitor')">
-        <div class="main-view-kicker">Monitor</div>
-        <div class="main-view-title">数据监控</div>
-        <div class="main-view-desc">看关键词组口径的库内数据、趋势、速率、最新动态和全局日志。</div>
-      </button>
-      <button class="main-view-btn" id="mainViewCrawl" onclick="switchMainView('crawl')">
-        <div class="main-view-kicker">Crawl</div>
-        <div class="main-view-title">抓帖任务</div>
-        <div class="main-view-desc">创建关键词抓帖、从新到旧任务，查看当前运行任务和任务日志。</div>
-      </button>
-      <button class="main-view-btn" id="mainViewComment" onclick="switchMainView('comment')">
-        <div class="main-view-kicker">Comments</div>
-        <div class="main-view-title">评论补抓</div>
-        <div class="main-view-desc">从高价值帖子创建补抓任务，管理评论补抓进度和失败重试。</div>
-      </button>
     </div>
   </div>
 
