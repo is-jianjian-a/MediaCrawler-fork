@@ -27,7 +27,7 @@ from db import (
     get_crawler_db_path, get_config_values, get_crawler_stats,
     get_velocity, get_latest_note, _connect, _kw_placeholders,
 )
-from groups import list_groups, save_group, activate_group, delete_group
+from groups import list_groups, save_group, activate_group, delete_group, rename_group, copy_group
 from task_manager import init_task_db
 from crawl_task_manager import init_crawl_task_db
 from worth_scoring import score_post
@@ -1686,13 +1686,34 @@ def api_save_group():
     data = request.get_json(force=True)
     name = (data.get("name") or "").strip()
     keywords = data.get("keywords", [])
+    hidden_keywords = data.get("hidden_keywords")
     max_notes = data.get("max_notes", 200)
     if not name:
         return jsonify({"error": "name required"}), 400
     if not isinstance(keywords, list):
         return jsonify({"error": "keywords must be a list"}), 400
-    save_group(name, keywords, max_notes)
+    if hidden_keywords is not None and not isinstance(hidden_keywords, list):
+        return jsonify({"error": "hidden_keywords must be a list"}), 400
+    save_group(name, keywords, max_notes, hidden_keywords)
     activate_group(name)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/groups/rename", methods=["POST"])
+def api_rename_group():
+    data = request.get_json(force=True)
+    ok, error = rename_group(data.get("old_name", ""), data.get("new_name", ""))
+    if not ok:
+        return jsonify({"error": error}), 400
+    return jsonify({"ok": True})
+
+
+@app.route("/api/groups/copy", methods=["POST"])
+def api_copy_group():
+    data = request.get_json(force=True)
+    ok, error = copy_group(data.get("source_name", ""), data.get("new_name", ""))
+    if not ok:
+        return jsonify({"error": error}), 400
     return jsonify({"ok": True})
 
 

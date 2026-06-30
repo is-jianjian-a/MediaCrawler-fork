@@ -131,18 +131,25 @@ body {
 .source-key-summary { font-size:11px; color:var(--text-3); }
 .source-key-panel { display:none; margin-top:12px; border:1px solid var(--border); border-radius:var(--r-md); background:linear-gradient(180deg,#fff,var(--surface-2)); overflow:hidden; }
 .source-key-panel.open { display:block; }
-.source-key-toolbar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:10px; border-bottom:1px solid var(--hairline); }
-.source-key-list { max-height:360px; overflow:auto; overscroll-behavior:contain; padding:10px; display:grid; grid-template-columns:repeat(auto-fill,minmax(210px,1fr)); gap:8px; background:rgba(255,255,255,.58); }
-.source-key-card { text-align:left; border:1px solid var(--border); background:var(--surface); border-radius:12px; padding:9px 10px; cursor:pointer; font:inherit; color:var(--text); transition:border-color .12s, background .12s, box-shadow .12s, transform .12s; }
+.source-key-toolbar { display:grid; gap:8px; padding:10px; border-bottom:1px solid var(--hairline); }
+.source-key-row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.source-key-list { max-height:430px; overflow:auto; overscroll-behavior:contain; padding:10px; display:grid; grid-template-columns:repeat(auto-fill,minmax(158px,1fr)); gap:7px; background:rgba(255,255,255,.58); }
+.source-key-card { text-align:left; border:1px solid var(--border); background:var(--surface); border-radius:10px; padding:7px 8px; cursor:pointer; font:inherit; color:var(--text); transition:border-color .12s, background .12s, box-shadow .12s, transform .12s; min-width:0; }
 .source-key-card:hover { border-color:var(--border-strong); box-shadow:var(--shadow-xs); transform:translateY(-1px); }
 .source-key-card.selected { border-color:var(--brand-border); background:linear-gradient(180deg,#fff,var(--brand-soft)); box-shadow:0 6px 18px rgba(255,36,66,.08); }
+.source-key-card.hidden-key { opacity:.58; background:var(--surface-sunken); }
 .source-key-card .sk-top { display:flex; align-items:center; justify-content:space-between; gap:8px; }
-.source-key-card .sk-name { font-size:12px; font-weight:740; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.source-key-card .sk-check { width:18px; height:18px; border-radius:50%; border:1px solid var(--border-strong); display:grid; place-items:center; font-size:11px; color:transparent; flex-shrink:0; }
+.source-key-card .sk-name { font-size:11px; font-weight:740; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.source-key-card .sk-check { width:16px; height:16px; border-radius:50%; border:1px solid var(--border-strong); display:grid; place-items:center; font-size:10px; color:transparent; flex-shrink:0; }
 .source-key-card.selected .sk-check { border-color:var(--brand); background:var(--brand); color:#fff; }
-.source-key-card .sk-meta { margin-top:7px; display:grid; grid-template-columns:repeat(3,1fr); gap:5px; font-size:10px; color:var(--text-3); }
-.source-key-card .sk-meta b { display:block; color:var(--text-2); font-size:11px; }
-.source-key-card .sk-time { margin-top:7px; font-size:10px; color:var(--text-3); }
+.source-key-card .sk-meta { margin-top:5px; display:grid; grid-template-columns:repeat(3,1fr); gap:4px; font-size:9px; color:var(--text-3); }
+.source-key-card .sk-meta b { display:block; color:var(--text-2); font-size:10px; }
+.source-key-card .sk-time,.source-key-card .sk-groups { margin-top:5px; font-size:9px; color:var(--text-3); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.sk-actions { margin-top:6px; display:flex; align-items:center; gap:5px; }
+.sk-mini-btn { height:20px; padding:0 7px; border-radius:999px; border:1px solid var(--border); background:var(--surface); color:var(--text-3); font:inherit; font-size:9px; cursor:pointer; }
+.sk-mini-btn:hover { border-color:var(--border-strong); color:var(--text); }
+.source-key-checkline { display:inline-flex; align-items:center; gap:5px; font-size:11px; color:var(--text-3); }
+.source-key-checkline input { margin:0; }
 .source-key-save-state { font-size:11px; color:var(--text-3); min-width:72px; }
 .source-key-save-state.saving { color:var(--amber); }
 .source-key-save-state.saved { color:var(--green); }
@@ -619,17 +626,32 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
         </div>
         <div class="source-key-panel" id="sourceKeyPanel">
           <div class="source-key-toolbar">
-            <input class="input" id="sourceKeySearch" placeholder="搜索 source_key" oninput="renderSourceKeyPicker()" />
-            <select class="select" id="sourceKeySort" onchange="renderSourceKeyPicker()">
-              <option value="latest_desc">最新入库优先</option>
-              <option value="posts_desc">帖子数最多</option>
-              <option value="db_comments_desc">库内评论最多</option>
-              <option value="platform_comments_desc">平台评论最多</option>
-              <option value="name_asc">名称 A-Z</option>
-            </select>
-            <input class="input" id="groupNameInput" placeholder="新常用组名" />
-            <button class="btn btn-sm" onclick="createKeywordGroup()">新建组</button>
-            <button class="btn btn-sm btn-danger" onclick="deleteCurrentGroup()" title="删除当前组">删除当前组</button>
+            <div class="source-key-row">
+              <input class="input" id="groupNameInput" placeholder="组名 / 新组名" />
+              <button class="btn btn-sm" onclick="createKeywordGroup()">新建空组</button>
+              <button class="btn btn-sm" onclick="copyCurrentGroup()">复制组</button>
+              <button class="btn btn-sm" onclick="renameCurrentGroup()">重命名</button>
+              <button class="btn btn-sm btn-danger" onclick="deleteCurrentGroup()" title="删除当前组">删除当前组</button>
+            </div>
+            <div class="source-key-row">
+              <input class="input" id="sourceKeySearch" placeholder="搜索，空格/逗号分词" oninput="renderSourceKeyPicker()" style="width:180px" />
+              <select class="select" id="sourceKeyMatch" onchange="renderSourceKeyPicker()" style="min-width:92px">
+                <option value="or">OR 匹配</option>
+                <option value="and">AND 匹配</option>
+              </select>
+              <select class="select" id="sourceKeySort" onchange="renderSourceKeyPicker()">
+                <option value="latest_desc">最新入库优先</option>
+                <option value="posts_desc">帖子数最多</option>
+                <option value="db_comments_desc">库内评论最多</option>
+                <option value="platform_comments_desc">平台评论最多</option>
+                <option value="name_asc">名称 A-Z</option>
+              </select>
+              <button class="btn btn-sm" onclick="selectVisibleSourceKeys()">全选当前结果</button>
+              <button class="btn btn-sm" onclick="clearCurrentGroupKeywords()">清空当前组</button>
+              <button class="btn btn-sm" onclick="hideSelectedSourceKeys()">隐藏选中</button>
+              <button class="btn btn-sm" onclick="unhideVisibleSourceKeys()">取消隐藏当前结果</button>
+              <label class="source-key-checkline"><input type="checkbox" id="showHiddenSourceKeys" onchange="renderSourceKeyPicker()"> 显示隐藏关键词</label>
+            </div>
           </div>
           <div class="source-key-list" id="sourceKeyList"><div class="source-key-empty">加载 source_key…</div></div>
         </div>
@@ -2637,6 +2659,9 @@ function switchTab(name){
 function activeGroupKeywords(){
   return new Set((_activeGroup&&_activeGroup.keywords)||[]);
 }
+function activeGroupHiddenKeywords(){
+  return new Set((_activeGroup&&_activeGroup.hidden_keywords)||[]);
+}
 function sourceKeyTimestamp(item){
   const ts=Number(item.latest_add_ts||0);
   return ts>20000000000 ? Math.floor(ts/1000) : ts;
@@ -2646,6 +2671,47 @@ function setSourceKeySaveState(text, cls=''){
   if(!el) return;
   el.className='source-key-save-state '+cls;
   el.textContent=text||'';
+}
+function sourceKeyGroupAssociations(key){
+  const selected=[], hidden=[];
+  (_groups||[]).forEach(g=>{
+    if((g.keywords||[]).includes(key)) selected.push(g.name);
+    if((g.hidden_keywords||[]).includes(key)) hidden.push(g.name);
+  });
+  return {selected, hidden};
+}
+function sourceKeySearchTokens(){
+  return (document.getElementById('sourceKeySearch')?.value||'')
+    .trim()
+    .toLowerCase()
+    .split(/[\s,，|]+/)
+    .filter(Boolean);
+}
+function sortedFilteredSourceKeys(){
+  const hidden=activeGroupHiddenKeywords();
+  const showHidden=!!document.getElementById('showHiddenSourceKeys')?.checked;
+  const tokens=sourceKeySearchTokens();
+  const matchMode=document.getElementById('sourceKeyMatch')?.value||'or';
+  const sort=document.getElementById('sourceKeySort')?.value||'latest_desc';
+  let rows=[..._sourceKeys].filter(it=>{
+    const key=it.source_key||'';
+    const assoc=sourceKeyGroupAssociations(key);
+    if(hidden.has(key)&&!showHidden) return false;
+    if(tokens.length){
+      const hay=[key, ...assoc.selected, ...assoc.hidden].join(' ').toLowerCase();
+      const ok=matchMode==='and' ? tokens.every(t=>hay.includes(t)) : tokens.some(t=>hay.includes(t));
+      if(!ok) return false;
+    }
+    return true;
+  });
+  rows.sort((a,b)=>{
+    if(sort==='posts_desc') return (b.post_count||0)-(a.post_count||0) || sourceKeyTimestamp(b)-sourceKeyTimestamp(a) || String(a.source_key).localeCompare(String(b.source_key),'zh-CN');
+    if(sort==='db_comments_desc') return (b.db_comment_count||0)-(a.db_comment_count||0) || sourceKeyTimestamp(b)-sourceKeyTimestamp(a) || String(a.source_key).localeCompare(String(b.source_key),'zh-CN');
+    if(sort==='platform_comments_desc') return (b.platform_comment_count||0)-(a.platform_comment_count||0) || sourceKeyTimestamp(b)-sourceKeyTimestamp(a) || String(a.source_key).localeCompare(String(b.source_key),'zh-CN');
+    if(sort==='name_asc') return String(a.source_key).localeCompare(String(b.source_key),'zh-CN');
+    return sourceKeyTimestamp(b)-sourceKeyTimestamp(a) || (b.post_count||0)-(a.post_count||0) || String(a.source_key).localeCompare(String(b.source_key),'zh-CN');
+  });
+  return rows;
 }
 async function loadGroups(){
   try{
@@ -2689,22 +2755,48 @@ async function switchGroup(){
 async function createKeywordGroup(){
   const name=document.getElementById('groupNameInput').value.trim();
   if(!name){ alert('请输入组名'); return; }
-  const keywords=_activeGroup?(_activeGroup.keywords||[]):[];
   const maxNotes=_activeGroup?(_activeGroup.max_notes||200):200;
+  if(_groups.some(g=>g.name===name)&&!confirm('组「'+name+'」已存在，确认覆盖为空组吗？')) return;
   setSourceKeySaveState('保存中…','saving');
-  const r=await fetch('/api/groups/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,keywords,max_notes:maxNotes})});
+  const r=await fetch('/api/groups/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,keywords:[],hidden_keywords:[],max_notes:maxNotes})});
   if(!r.ok){ setSourceKeySaveState('保存失败','error'); alert('新建组失败'); return; }
   document.getElementById('groupNameInput').value='';
   await loadGroups();
   setSourceKeySaveState('已新建','saved');
   refreshAll();
 }
-async function saveCurrentGroupKeywords(keywords){
+async function copyCurrentGroup(){
+  if(!_activeGroup){ alert('请先选择一个组'); return; }
+  const name=document.getElementById('groupNameInput').value.trim();
+  if(!name){ alert('请输入复制后的组名'); return; }
+  setSourceKeySaveState('复制中…','saving');
+  const r=await fetch('/api/groups/copy',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source_name:_activeGroup.name,new_name:name})});
+  if(!r.ok){ setSourceKeySaveState('复制失败','error'); alert('复制组失败：'+((await r.json().catch(()=>({}))).error||r.status)); return; }
+  document.getElementById('groupNameInput').value='';
+  await loadGroups();
+  setSourceKeySaveState('已复制','saved');
+  refreshAll();
+}
+async function renameCurrentGroup(){
+  if(!_activeGroup){ alert('请先选择一个组'); return; }
+  const name=document.getElementById('groupNameInput').value.trim();
+  if(!name){ alert('请输入新组名'); return; }
+  if(name===_activeGroup.name) return;
+  setSourceKeySaveState('重命名中…','saving');
+  const r=await fetch('/api/groups/rename',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({old_name:_activeGroup.name,new_name:name})});
+  if(!r.ok){ setSourceKeySaveState('重命名失败','error'); alert('重命名失败：'+((await r.json().catch(()=>({}))).error||r.status)); return; }
+  document.getElementById('groupNameInput').value='';
+  await loadGroups();
+  setSourceKeySaveState('已重命名','saved');
+  refreshAll();
+}
+async function saveCurrentGroupState(keywords, hiddenKeywords){
   if(!_activeGroup){ alert('请先新建一个常用组'); return false; }
   const name=_activeGroup.name;
   const maxNotes=_activeGroup.max_notes||200;
+  if(hiddenKeywords==null) hiddenKeywords=_activeGroup.hidden_keywords||[];
   setSourceKeySaveState('保存中…','saving');
-  const r=await fetch('/api/groups/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,keywords,max_notes:maxNotes})});
+  const r=await fetch('/api/groups/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,keywords,hidden_keywords:hiddenKeywords,max_notes:maxNotes})});
   if(!r.ok){
     setSourceKeySaveState('保存失败','error');
     return false;
@@ -2724,28 +2816,65 @@ async function toggleSourceKey(sourceKey){
   else selected.add(sourceKey);
   _activeGroup.keywords=[...selected];
   renderSourceKeyPicker();
-  await saveCurrentGroupKeywords(_activeGroup.keywords);
+  await saveCurrentGroupState(_activeGroup.keywords, _activeGroup.hidden_keywords||[]);
+}
+async function toggleHiddenSourceKey(sourceKey, ev){
+  if(ev) ev.stopPropagation();
+  if(!_activeGroup){ alert('请先选择一个组'); return; }
+  const hidden=activeGroupHiddenKeywords();
+  if(hidden.has(sourceKey)) hidden.delete(sourceKey);
+  else hidden.add(sourceKey);
+  _activeGroup.hidden_keywords=[...hidden];
+  renderSourceKeyPicker();
+  await saveCurrentGroupState(_activeGroup.keywords||[], _activeGroup.hidden_keywords);
+}
+async function selectVisibleSourceKeys(){
+  if(!_activeGroup){ alert('请先选择一个组'); return; }
+  const selected=activeGroupKeywords();
+  sortedFilteredSourceKeys().forEach(it=>selected.add(it.source_key||''));
+  _activeGroup.keywords=[...selected];
+  renderSourceKeyPicker();
+  await saveCurrentGroupState(_activeGroup.keywords, _activeGroup.hidden_keywords||[]);
+}
+async function clearCurrentGroupKeywords(){
+  if(!_activeGroup){ alert('请先选择一个组'); return; }
+  if(!confirm('清空当前组「'+_activeGroup.name+'」的已选 source_key？隐藏设置会保留。')) return;
+  _activeGroup.keywords=[];
+  renderSourceKeyPicker();
+  await saveCurrentGroupState([], _activeGroup.hidden_keywords||[]);
+}
+async function hideSelectedSourceKeys(){
+  if(!_activeGroup){ alert('请先选择一个组'); return; }
+  const selected=activeGroupKeywords();
+  if(!selected.size){ alert('当前组没有已选 source_key'); return; }
+  const hidden=activeGroupHiddenKeywords();
+  selected.forEach(k=>hidden.add(k));
+  _activeGroup.hidden_keywords=[...hidden];
+  renderSourceKeyPicker();
+  await saveCurrentGroupState(_activeGroup.keywords||[], _activeGroup.hidden_keywords);
+}
+async function unhideVisibleSourceKeys(){
+  if(!_activeGroup){ alert('请先选择一个组'); return; }
+  const visible=new Set(sortedFilteredSourceKeys().map(it=>it.source_key||''));
+  const hidden=activeGroupHiddenKeywords();
+  visible.forEach(k=>hidden.delete(k));
+  _activeGroup.hidden_keywords=[...hidden];
+  renderSourceKeyPicker();
+  await saveCurrentGroupState(_activeGroup.keywords||[], _activeGroup.hidden_keywords);
 }
 function renderSourceKeyPicker(){
   const summary=document.getElementById('sourceKeySummary');
   if(summary){
     const selectedCount=((_activeGroup&&_activeGroup.keywords)||[]).length;
-    summary.textContent=(_activeGroup?`当前组 ${selectedCount} 个 · 库内 ${_sourceKeys.length} 个 source_key`:`未选择组 · 库内 ${_sourceKeys.length} 个 source_key`);
+    const hiddenCount=((_activeGroup&&_activeGroup.hidden_keywords)||[]).length;
+    const shownCount=sortedFilteredSourceKeys().length;
+    summary.textContent=(_activeGroup?`当前组 ${selectedCount} 个 · 隐藏 ${hiddenCount} 个 · 当前显示 ${shownCount}/${_sourceKeys.length}`:`未选择组 · 库内 ${_sourceKeys.length} 个 source_key`);
   }
   const box=document.getElementById('sourceKeyList');
   if(!box) return;
   const selected=activeGroupKeywords();
-  const q=(document.getElementById('sourceKeySearch')?.value||'').trim().toLowerCase();
-  const sort=document.getElementById('sourceKeySort')?.value||'latest_desc';
-  let rows=[..._sourceKeys];
-  if(q) rows=rows.filter(it=>(it.source_key||'').toLowerCase().includes(q));
-  rows.sort((a,b)=>{
-    if(sort==='posts_desc') return (b.post_count||0)-(a.post_count||0) || sourceKeyTimestamp(b)-sourceKeyTimestamp(a) || String(a.source_key).localeCompare(String(b.source_key),'zh-CN');
-    if(sort==='db_comments_desc') return (b.db_comment_count||0)-(a.db_comment_count||0) || sourceKeyTimestamp(b)-sourceKeyTimestamp(a) || String(a.source_key).localeCompare(String(b.source_key),'zh-CN');
-    if(sort==='platform_comments_desc') return (b.platform_comment_count||0)-(a.platform_comment_count||0) || sourceKeyTimestamp(b)-sourceKeyTimestamp(a) || String(a.source_key).localeCompare(String(b.source_key),'zh-CN');
-    if(sort==='name_asc') return String(a.source_key).localeCompare(String(b.source_key),'zh-CN');
-    return sourceKeyTimestamp(b)-sourceKeyTimestamp(a) || (b.post_count||0)-(a.post_count||0) || String(a.source_key).localeCompare(String(b.source_key),'zh-CN');
-  });
+  const hidden=activeGroupHiddenKeywords();
+  const rows=sortedFilteredSourceKeys();
   if(!rows.length){
     box.innerHTML='<div class="source-key-empty">'+(_sourceKeys.length?'没有匹配的 source_key':'库中暂无 source_key')+'</div>';
     return;
@@ -2753,8 +2882,13 @@ function renderSourceKeyPicker(){
   box.innerHTML=rows.map(it=>{
     const key=it.source_key||'';
     const isSel=selected.has(key);
+    const isHidden=hidden.has(key);
+    const assoc=sourceKeyGroupAssociations(key);
+    const selectedLabel=assoc.selected.length?('已选组 '+assoc.selected.slice(0,2).join('、')+(assoc.selected.length>2?' +'+(assoc.selected.length-2):'')):'未加入组';
+    const hiddenLabel=assoc.hidden.length?(' · 隐藏于 '+assoc.hidden.slice(0,1).join('、')+(assoc.hidden.length>1?' +'+(assoc.hidden.length-1):'')):'';
+    const assocTitle='已选组：'+(assoc.selected.join('、')||'无')+'；隐藏于：'+(assoc.hidden.join('、')||'无');
     const encoded=encodeURIComponent(key);
-    return `<button class="source-key-card ${isSel?'selected':''}" onclick="toggleSourceKey(decodeURIComponent('${encoded}'))" title="${escapeHtml(key)}">
+    return `<div class="source-key-card ${isSel?'selected':''} ${isHidden?'hidden-key':''}" onclick="toggleSourceKey(decodeURIComponent('${encoded}'))" title="${escapeHtml(key)}">
       <div class="sk-top"><span class="sk-name">${escapeHtml(key)}</span><span class="sk-check">✓</span></div>
       <div class="sk-meta">
         <span><b>${(it.post_count||0).toLocaleString()}</b>帖子</span>
@@ -2762,7 +2896,9 @@ function renderSourceKeyPicker(){
         <span><b>${(it.platform_comment_count||0).toLocaleString()}</b>平台评</span>
       </div>
       <div class="sk-time">最新入库 ${fmtDateHour(sourceKeyTimestamp(it))}</div>
-    </button>`;
+      <div class="sk-groups" title="${escapeHtml(assocTitle)}">${escapeHtml(selectedLabel+hiddenLabel)}</div>
+      <div class="sk-actions"><button class="sk-mini-btn" onclick="toggleHiddenSourceKey(decodeURIComponent('${encoded}'), event)">${isHidden?'取消隐藏':'隐藏'}</button></div>
+    </div>`;
   }).join('');
 }
 async function deleteCurrentGroup(){
