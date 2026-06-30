@@ -416,15 +416,15 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
 .task-post-meta { font-size: 10px; color: var(--text-3); margin-top: 2px; }
 .task-post-count { font-size: 11px; color: var(--text-2); text-align: right; }
 .task-post-error { grid-column: 2 / -1; color: var(--red); font-size: 11px; }
-.task-log-box { margin-top: 14px; border: 1px solid var(--border); border-radius: var(--r); background: #111114; color: #e4e4e7; overflow: hidden; }
-.task-log-head { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; border-bottom: 1px solid rgba(255,255,255,.08); font-size: 11px; color: #a1a1aa; }
-.task-log-content { max-height: 220px; overflow-y: auto; overscroll-behavior: contain; padding: 10px 12px; font-family: 'SF Mono', ui-monospace, Menlo, monospace; font-size: 10.5px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
+.task-log-box { margin-top: 14px; border: 1px solid #1f2937; border-radius: var(--r); background: #0b1020; color: #f8fafc; overflow: hidden; box-shadow: inset 0 1px 0 rgba(255,255,255,.04); }
+.task-log-head { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; border-bottom: 1px solid rgba(255,255,255,.10); font-size: 11px; color: #cbd5e1; background:#111827; }
+.task-log-content { max-height: 260px; overflow-y: auto; overscroll-behavior: contain; padding: 11px 12px; font-family: 'SF Mono', ui-monospace, Menlo, monospace; font-size: 11px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; background:#0b1020; color:#f8fafc; }
 @media(max-width:980px){ .task-workbench{ grid-template-columns: 1fr; } .task-list{ border-right: none; border-bottom: 1px solid var(--hairline); } .task-detail{ max-height: none; } }
 
 /* keyword crawl task creator */
-.crawl-builder { display: grid; grid-template-columns: minmax(420px, 1fr) 420px; gap: 0; min-height: 560px; }
+.crawl-builder { display: grid; grid-template-columns: minmax(500px, 1fr) minmax(520px, .85fr); gap: 0; min-height: 560px; }
 .crawl-form { padding: 16px; border-right: 1px solid var(--hairline); }
-.crawl-side { padding: 10px; max-height: 640px; overflow-y: auto; overscroll-behavior: contain; background: var(--surface-2); }
+.crawl-side { padding: 12px; max-height: 720px; overflow-y: auto; overscroll-behavior: contain; background: var(--surface-2); }
 .keyword-preset-list { display: grid; gap: 10px; }
 .preset-card { border: 1px solid var(--border); border-radius: var(--r); background: var(--surface); padding: 11px 12px; }
 .preset-head { display: flex; justify-content: space-between; gap: 10px; align-items: start; margin-bottom: 8px; }
@@ -438,8 +438,16 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
 .keyword-textarea:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-soft); }
 .crawl-summary { font-size: 11px; color: var(--text-3); display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
 .crawl-task-item { padding: 12px; border-radius: var(--r); border: 1px solid transparent; cursor: pointer; background: var(--surface); margin-bottom: 8px; transition: all .12s; }
-.crawl-task-item:hover,.crawl-task-item.active { border-color: var(--border); box-shadow: var(--shadow-xs); }
+.crawl-task-item:hover { border-color: var(--border); box-shadow: var(--shadow-xs); }
+.crawl-task-item.active { border-color: var(--brand-border); box-shadow:0 8px 24px rgba(255,36,66,.08); background:linear-gradient(180deg,#fff,var(--brand-soft)); }
 .crawl-task-keywords { margin-top: 7px; font-size: 11px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.crawl-selected-detail { border:1px solid var(--border); border-radius:var(--r); background:var(--surface); padding:12px; margin-bottom:10px; box-shadow:var(--shadow-xs); }
+.crawl-selected-detail .title { font-size:13px; font-weight:760; line-height:1.35; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.crawl-selected-detail .sub { margin-top:5px; color:var(--text-3); font-size:11px; display:flex; gap:10px; flex-wrap:wrap; }
+.crawl-selected-detail .config { margin-top:9px; display:flex; flex-wrap:wrap; gap:6px; }
+.crawl-selected-detail .config .tag { font-size:10px; color:var(--text-2); background:var(--surface-sunken); border:1px solid var(--border); border-radius:999px; padding:3px 7px; }
+.crawl-selected-detail .keywords { margin-top:9px; color:var(--text-2); font-size:11px; line-height:1.5; max-height:44px; overflow:auto; overscroll-behavior:contain; }
+.crawl-task-list-head { display:flex; align-items:center; justify-content:space-between; margin:12px 2px 8px; font-size:12px; font-weight:700; color:var(--text); }
 @media(max-width:1080px){ .crawl-builder{ grid-template-columns: 1fr; } .crawl-form{ border-right: none; border-bottom: 1px solid var(--hairline); } .crawl-side{ max-height: none; } }
 .empty { padding: 40px 20px; text-align: center; color: var(--text-3); font-size: 12px; }
 .empty .em-ico { width: 38px; height: 38px; margin: 0 auto 10px; border-radius: 50%; background: var(--surface-sunken); display: grid; place-items: center; color: var(--text-4); }
@@ -466,9 +474,9 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
 .active-task-metric .foot { margin-top:4px;font-size:10px;color:var(--text-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
 .active-task-body { display:grid;grid-template-columns:1.1fr .9fr;gap:0; }
 .active-task-keywords { padding:12px 16px;overflow:auto;max-height:320px;overscroll-behavior:contain;border-right:1px solid var(--hairline); }
-.active-task-log { max-height:320px;overflow:auto;overscroll-behavior:contain;padding:12px 14px;font-family:'SF Mono',ui-monospace,Menlo,monospace;font-size:10.5px;line-height:1.55;background:#111827;color:#d1d5db;white-space:pre-wrap;word-break:break-word; }
-.active-task-log .log-line { color:#d1d5db; }
-.active-task-log .lvl-INFO { color:#e5e7eb; }
+.active-task-log { max-height:320px;overflow:auto;overscroll-behavior:contain;padding:12px 14px;font-family:'SF Mono',ui-monospace,Menlo,monospace;font-size:11px;line-height:1.6;background:#0b1020;color:#f8fafc;white-space:pre-wrap;word-break:break-word; }
+.active-task-log .log-line { color:#f8fafc; }
+.active-task-log .lvl-INFO { color:#f8fafc; }
 .active-task-log .lvl-WARNING { color:#fbbf24; }
 .active-task-log .lvl-ERROR { color:#f87171; }
 .active-task-card.compact .active-task-body { display:none; }
@@ -1218,11 +1226,19 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
             </div>
           </div>
           <div class="crawl-side">
-            <div id="crawlTaskList"><div class="empty">点击「刷新任务列表」查看抓帖任务</div></div>
+            <div class="crawl-selected-detail" id="crawlSelectedDetail">
+              <div class="title">未选择抓帖任务</div>
+              <div class="sub">点击下方任务列表后，这里会显示该任务的配置和日志。</div>
+            </div>
             <div class="task-log-box" style="margin-top:10px">
-              <div class="task-log-head"><span>抓帖任务日志</span><button class="btn btn-sm" onclick="loadSelectedCrawlLog()">刷新日志</button></div>
+              <div class="task-log-head"><span id="crawlLogTitle">选中任务日志</span><button class="btn btn-sm" onclick="loadSelectedCrawlLog()">刷新日志</button></div>
               <div class="task-log-content" id="crawlLogContent">选择任务后显示日志。</div>
             </div>
+            <div class="crawl-task-list-head">
+              <span>任务列表</span>
+              <span class="section-sub" id="crawlTaskListMeta">--</span>
+            </div>
+            <div id="crawlTaskList"><div class="empty">点击「刷新任务列表」查看抓帖任务</div></div>
           </div>
         </div>
       </div>
@@ -1301,7 +1317,7 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
 let trendChart=null, postRateChart=null, commentRateChart=null, autoRefresh=true;
 let _worthPosts=[], _groups=[], _activeGroup=null, _sourceKeys=[], _historyMinutes=180, _velocityMinutes=180;
 let _taskDraftPosts=[], _selectedTaskId='', _showArchivedTasks=false;
-let _crawlPresets=[], _crawlKeywordGroups=[], _selectedCrawlKeywords=new Set(), _selectedCrawlTaskId='', _showArchivedCrawlTasks=false;
+let _crawlPresets=[], _crawlKeywordGroups=[], _crawlTasks=[], _selectedCrawlKeywords=new Set(), _selectedCrawlTaskId='', _showArchivedCrawlTasks=false;
 let _crawlMode='standard';
 
 const C = {
@@ -2181,12 +2197,19 @@ function crawlActionButtons(task){
 async function loadCrawlTasks(){
   document.getElementById('crawlStatus').innerHTML='<span class="spin-load"></span> 加载中…';
   const tasks=await fetchJSON('/api/crawl-tasks'+(_showArchivedCrawlTasks?'?archived=1':''));
+  _crawlTasks=tasks||[];
   document.getElementById('crawlBadge').textContent=tasks.length||0;
   const box=document.getElementById('crawlTaskList');
+  const meta=document.getElementById('crawlTaskListMeta');
+  if(meta) meta.textContent=(_showArchivedCrawlTasks?'已归档':'未归档')+' · '+tasks.length+' 个';
   if(!tasks.length){
     box.innerHTML='<div class="empty">'+(_showArchivedCrawlTasks?'暂无归档抓帖任务':'暂无抓帖任务')+'</div>';
     document.getElementById('crawlStatus').textContent=_showArchivedCrawlTasks?'无归档任务':'无任务';
+    renderSelectedCrawlTask(null);
     return;
+  }
+  if(!_selectedCrawlTaskId || !tasks.some(t=>t.id===_selectedCrawlTaskId)){
+    _selectedCrawlTaskId=tasks[0].id;
   }
   box.innerHTML=tasks.map(t=>{
     const active=_selectedCrawlTaskId===t.id?' active':'';
@@ -2197,7 +2220,7 @@ async function loadCrawlTasks(){
       ? ('到 '+(cfg.publish_date_after||'日期下限')+' 停')
       : ('搜索 '+(cfg.max_count||100)+' 停');
     const limitLabel=cfg.max_count>0?('搜索 '+cfg.max_count+'/词'):'搜索不限量';
-    return `<div class="crawl-task-item${active}" onclick="selectCrawlTask('${t.id}')">
+    return `<div class="crawl-task-item${active}" data-task-id="${escapeHtml(t.id)}" onclick="selectCrawlTask('${t.id}')">
       <div class="task-top">
         <div class="task-name"><span>${escapeHtml(t.name)}</span></div>
         <div class="task-row-actions">
@@ -2218,13 +2241,60 @@ async function loadCrawlTasks(){
     </div>`;
   }).join('');
   document.getElementById('crawlStatus').textContent=(_showArchivedCrawlTasks?'已归档 ':'未归档 ')+'共 '+tasks.length+' 个任务';
-  if(_selectedCrawlTaskId) loadCrawlTaskLog(_selectedCrawlTaskId);
+  if(_selectedCrawlTaskId) selectCrawlTask(_selectedCrawlTaskId, {skipScroll:true});
   containAllScrollAreas(document.getElementById('panelCrawl'));
 }
-async function selectCrawlTask(taskId){
+function renderSelectedCrawlTask(task){
+  const box=document.getElementById('crawlSelectedDetail');
+  if(!box) return;
+  if(!task){
+    box.innerHTML='<div class="title">未选择抓帖任务</div><div class="sub">点击下方任务列表后，这里会显示该任务的配置和日志。</div>';
+    document.getElementById('crawlLogTitle').textContent='选中任务日志';
+    document.getElementById('crawlLogContent').textContent='选择任务后显示日志。';
+    return;
+  }
+  const cfg=task.config||{};
+  const kws=task.keywords||[];
+  const created=task.created_at?new Date(task.created_at*1000).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}):'--';
+  const started=task.started_at?new Date(task.started_at*1000).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}):'--';
+  const completed=task.completed_at?new Date(task.completed_at*1000).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}):'--';
+  const maxCount=(cfg.max_count||0)>0?cfg.max_count:'不限';
+  box.innerHTML=`<div class="task-top" style="margin-bottom:4px">
+      <div class="title" title="${escapeHtml(task.name||'')}">${escapeHtml(task.name||task.id)}</div>
+      <span class="status-chip ${escapeHtml(task.status||'pending')}">${crawlStatusLabel(task.status)}</span>
+    </div>
+    <div class="sub">
+      <span class="mono">${escapeHtml(task.id)}</span>
+      <span>创建 ${created}</span>
+      <span>开始 ${started}</span>
+      <span>完成 ${completed}</span>
+      <span>PID ${escapeHtml(task.worker_pid||'--')}</span>
+      <span>退出码 ${task.exit_code==null?'--':escapeHtml(task.exit_code)}</span>
+    </div>
+    <div class="config">
+      <span class="tag">${kws.length} 词</span>
+      <span class="tag">搜索上限 ${escapeHtml(maxCount)}</span>
+      <span class="tag">排序 ${escapeHtml(cfg.sort_type||'time_descending')}</span>
+      <span class="tag">日期下限 ${escapeHtml(cfg.publish_date_after||'--')}</span>
+      <span class="tag">评论 ${cfg.get_comment?'抓':'不抓'}</span>
+      <span class="tag">浏览器 ${escapeHtml(cfg.browser_mode||'standard')}</span>
+    </div>
+    ${task.error_message?`<div class="task-post-error" style="margin-top:8px">${escapeHtml(task.error_message)}</div>`:''}
+    <div class="keywords">${escapeHtml(kws.join('，')||'无关键词')}</div>`;
+  document.getElementById('crawlLogTitle').textContent='选中任务日志 · '+task.id;
+}
+async function selectCrawlTask(taskId, opts){
   _selectedCrawlTaskId=taskId;
-  document.querySelectorAll('.crawl-task-item').forEach(item=>item.classList.toggle('active', item.getAttribute('onclick')===`selectCrawlTask('${taskId}')`));
+  document.querySelectorAll('.crawl-task-item').forEach(item=>item.classList.toggle('active', item.dataset.taskId===taskId));
+  let task=_crawlTasks.find(t=>t.id===taskId);
+  if(!task){
+    try{ task=await fetchJSON('/api/crawl-tasks/'+taskId); }catch(e){}
+  }
+  renderSelectedCrawlTask(task);
   await loadCrawlTaskLog(taskId);
+  if(!(opts&&opts.skipScroll)){
+    document.getElementById('crawlSelectedDetail')?.scrollIntoView({block:'nearest', behavior:'smooth'});
+  }
 }
 async function loadCrawlTaskLog(taskId){
   const box=document.getElementById('crawlLogContent');
