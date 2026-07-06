@@ -29,9 +29,11 @@ from store.xhs._store_impl import XhsMongoStoreImplement
 from store.douyin._store_impl import DouyinMongoStoreImplement
 from config import db_config
 import logging
+import pytest
 logger = logging.getLogger("MediaCrawler")
 
 
+@pytest.mark.integration
 class TestMongoDBRealConnection(unittest.TestCase):
 
     @classmethod

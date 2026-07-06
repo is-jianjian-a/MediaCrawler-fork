@@ -55,3 +55,11 @@ exclude = [".venv", ".git", "__pycache__", "browser_data", "data", "cache", "log
 # 初版基线：仅启用高信噪比规则；后续随存量债务清理逐步收紧
 select = ["E", "F", "I", "W"]
 ignore = ["E402", "E501"]
+
+[tool.pytest.ini_options]
+# 单测试目录，避免 test/ 与 tests/ 重复发现；CI 门禁只跑单元测试
+testpaths = ["tests"]
+markers = [
+    "integration: 依赖外部服务的集成测试（Redis/MySQL/MongoDB/代理源），CI 中默认跳过，本地有环境时运行",
+]
+

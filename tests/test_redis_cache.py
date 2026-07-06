@@ -27,13 +27,20 @@
 import time
 import unittest
 
+import pytest
 from cache.redis_cache import RedisCache
 
 
+@pytest.mark.integration
 class TestRedisCache(unittest.TestCase):
 
     def setUp(self):
-        self.redis_cache = RedisCache()
+        try:
+            self.redis_cache = RedisCache()
+            self.redis_cache.set("__healthcheck__", "1", 5)
+            self.redis_cache.get("__healthcheck__")
+        except Exception as exc:
+            self.skipTest(f"Redis unavailable: {exc}")
 
     def test_set_and_get(self):
         self.redis_cache.set('key', 'value', 10)

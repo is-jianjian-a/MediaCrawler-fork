@@ -22,17 +22,31 @@
 # @Author  : relakkes@gmail.com
 # @Time    : 2023/12/2 14:42
 # @Desc    :
+import asyncio
 import time
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
 from proxy.proxy_ip_pool import create_ip_pool, ProxyIpPool
 from proxy.types import IpInfoModel
 import logging
 logger = logging.getLogger("MediaCrawler")
 
 
+@pytest.mark.integration
 class TestIpPool(IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        try:
+            # Probe connectivity without hanging CI: bail out if the proxy
+            # source is unreachable within 10s.
+            self.pool = await asyncio.wait_for(
+                create_ip_pool(ip_pool_count=1, enable_validate_ip=False),
+                timeout=10,
+            )
+        except Exception as exc:
+            self.skipTest(f"Proxy pool unavailable (needs network/proxy source): {exc}")
+
     async def test_ip_pool(self):
         pool = await create_ip_pool(ip_pool_count=1, enable_validate_ip=True)
         logger.info('\n')

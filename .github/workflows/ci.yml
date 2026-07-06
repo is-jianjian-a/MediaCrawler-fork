@@ -38,7 +38,10 @@ jobs:
         run: uv sync
 
       - name: Run tests
-        run: uv run pytest tests/ -q
+        # CI 门禁只跑单元测试；依赖外部服务的集成测试（@pytest.mark.integration）
+        # 在 CI 中跳过，避免无 Redis/MySQL/MongoDB/代理源时红了流水线。
+        # 本地有环境时可用 `uv run pytest tests/` 跑全部（集成测试会在缺服务时优雅 skip）。
+        run: uv run pytest tests/ -m "not integration" -q
 
   lint:
     name: Lint (ruff) [advisory]
