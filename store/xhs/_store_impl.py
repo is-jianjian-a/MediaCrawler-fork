@@ -39,6 +39,7 @@ from var import crawler_type_var
 from database.mongodb_store_base import MongoDBStoreBase
 from tools import utils
 from store.excel_store_base import ExcelStoreBase
+from config.db_config import get_current_account
 
 
 def _parse_count(value) -> int:
@@ -234,7 +235,8 @@ class XhsDbStoreImplement(AbstractStore):
             note_url=content_item.get("note_url"),
             source_keyword=content_item.get("source_keyword", ""),
             xsec_token=content_item.get("xsec_token", ""),
-            raw_data=content_item.get("raw_data", "")
+            raw_data=content_item.get("raw_data", ""),
+            crawler_account=content_item.get("crawler_account") or get_current_account(),
         )
         session.add(note)
 
@@ -294,7 +296,8 @@ class XhsDbStoreImplement(AbstractStore):
             pictures=comment_item.get("pictures", ""),
             parent_comment_id=str(comment_item.get("parent_comment_id", "")),
             like_count=_parse_count(comment_item.get("like_count")),
-            raw_data=comment_item.get("raw_data", "")
+            raw_data=comment_item.get("raw_data", ""),
+            crawler_account=comment_item.get("crawler_account") or get_current_account(),
         )
         session.add(comment)
 

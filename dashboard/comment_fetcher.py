@@ -257,6 +257,8 @@ class CommentTaskExecutor:
         env.setdefault("MEDIACRAWLER_ENABLE_CDP", "false")
         env.setdefault("MEDIACRAWLER_REQUIRE_CDP", "false")
         env.setdefault("MEDIACRAWLER_CDP_DEBUG_PORT", str(get_cdp_debug_port()))
+        env.setdefault("MEDIACRAWLER_AUTO_CLOSE_BROWSER", "false")
+        env.setdefault("MEDIACRAWLER_CDP_CONNECT_EXISTING", "true")
         default_chrome = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
         if os.path.exists(default_chrome):
             env.setdefault("MEDIACRAWLER_BROWSER_PATH", default_chrome)

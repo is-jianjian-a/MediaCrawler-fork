@@ -308,6 +308,7 @@ class XhsNote(Base):
     source_keyword = Column(Text, default='', comment='来源关键词')
     xsec_token = Column(Text, comment='Xsec Token')
     raw_data = Column(Text, comment='API原始响应JSON')
+    crawler_account = Column(String(64), default='default', index=True, comment='抓取账号')
 
 class XhsNoteKeywordHit(Base):
     __tablename__ = 'xhs_note_keyword_hit'
@@ -343,6 +344,7 @@ class XhsNoteComment(Base):
     parent_comment_id = Column(String(255), comment='父评论ID')
     like_count = Column(BigInteger, default=0, comment='点赞数')
     raw_data = Column(Text, comment='API原始响应JSON')
+    crawler_account = Column(String(64), default='default', index=True, comment='抓取账号')
 
 class TiebaNote(Base):
     __tablename__ = 'tieba_note'

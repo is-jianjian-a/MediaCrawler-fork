@@ -55,6 +55,9 @@ class CDPBrowserManager:
 
         def sync_cleanup():
             """Synchronous cleanup function for atexit"""
+            if not config.AUTO_CLOSE_BROWSER:
+                utils.logger.info("[CDPBrowserManager] atexit: Browser process kept running (AUTO_CLOSE_BROWSER=false)")
+                return
             if self.launcher and self.launcher.browser_process:
                 utils.logger.info("[CDPBrowserManager] atexit: Cleaning up browser process")
                 self.launcher.cleanup()
@@ -68,9 +71,12 @@ class CDPBrowserManager:
 
         def signal_handler(signum, frame):
             """Signal handler"""
-            utils.logger.info(f"[CDPBrowserManager] Received signal {signum}, cleaning up browser process")
-            if self.launcher and self.launcher.browser_process:
+            utils.logger.info(f"[CDPBrowserManager] Received signal {signum}")
+            if self.launcher and self.launcher.browser_process and config.AUTO_CLOSE_BROWSER:
+                utils.logger.info("[CDPBrowserManager] Cleaning up browser process")
                 self.launcher.cleanup()
+            elif self.launcher and self.launcher.browser_process:
+                utils.logger.info("[CDPBrowserManager] Browser process kept running (AUTO_CLOSE_BROWSER=false)")
 
             if signum == signal.SIGINT:
                 if prev_sigint == signal.default_int_handler:
@@ -486,6 +492,12 @@ class CDPBrowserManager:
             force: Whether to force cleanup browser process (ignoring AUTO_CLOSE_BROWSER config)
         """
         try:
+            if not force and not config.AUTO_CLOSE_BROWSER:
+                utils.logger.info("[CDPBrowserManager] Cleanup skipped; browser kept running (AUTO_CLOSE_BROWSER=false)")
+                self.browser_context = None
+                self.browser = None
+                return
+
             # Close browser context
             if self.browser_context:
                 try:

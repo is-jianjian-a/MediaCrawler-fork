@@ -861,6 +861,9 @@ class XiaoHongShuCrawler(AbstractCrawler):
 
     async def close(self):
         """Close browser context"""
+        if not getattr(config, "AUTO_CLOSE_BROWSER", False):
+            utils.logger.info("[XiaoHongShuCrawler.close] Browser context kept open (AUTO_CLOSE_BROWSER=false)")
+            return
         # Special handling if using CDP mode
         if self.cdp_manager:
             await self.cdp_manager.cleanup()

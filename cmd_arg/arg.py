@@ -31,7 +31,7 @@ import typer
 from typing_extensions import Annotated
 
 import config
-from config.db_config import _ACCOUNT_DB_MAP
+from config.db_config import _VALID_ACCOUNTS
 from tools.utils import str2bool
 
 
@@ -359,18 +359,18 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
         enable_ip_proxy_value = _to_bool(enable_ip_proxy)
         init_db_value = init_db.value if init_db else None
 
-        # Switch account: override DB path and browser data dir
-        if account and account in _ACCOUNT_DB_MAP:
-            db_path = _ACCOUNT_DB_MAP[account]
-            config.SQLITE_DB_PATH = db_path
-            config.sqlite_db_config["db_path"] = db_path
+        # Switch account: set browser data dir and crawler_account source
+        if account and account in _VALID_ACCOUNTS:
             config.USER_DATA_DIR = f"%s_user_data_dir_account{account}"
+            # 同步账号标识到 db_config，供存储层写入 crawler_account
+            from config import db_config as _db_config
+            _db_config._DEFAULT_ACCOUNT = account
             typer.secho(
-                f"🔀 Switched to account {account}: DB={db_path}, browser_dir={config.USER_DATA_DIR}",
+                f"🔀 Switched to account {account}: browser_dir={config.USER_DATA_DIR}, all data goes to main DB",
                 fg=typer.colors.CYAN,
             )
         elif account:
-            known = ", ".join(sorted(_ACCOUNT_DB_MAP.keys()))
+            known = ", ".join(sorted(_VALID_ACCOUNTS))
             typer.secho(
                 f"⚠️ Unknown account '{account}'. Known: {known}. Using default config.",
                 fg=typer.colors.YELLOW,

@@ -88,6 +88,8 @@ def _build_command(task: dict) -> tuple[list[str], dict]:
             "MEDIACRAWLER_ENABLE_CDP": _bool_text(bool(config.get("enable_cdp"))),
             "MEDIACRAWLER_REQUIRE_CDP": _bool_text(bool(config.get("require_cdp"))),
             "MEDIACRAWLER_CDP_DEBUG_PORT": str(config.get("cdp_debug_port", 9222)),
+            "MEDIACRAWLER_AUTO_CLOSE_BROWSER": "false",
+            "MEDIACRAWLER_CDP_CONNECT_EXISTING": "true",
         }
     )
     if config.get("browser_path"):

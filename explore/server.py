@@ -62,14 +62,7 @@ state = _load_state()
 # ── helpers ──────────────────────────────────────────────────────────
 
 def _get_crawler_db_path():
-    from config.db_config import _ACCOUNT_DB_MAP
-    for acct in ["02", "03"]:
-        path = _ACCOUNT_DB_MAP.get(acct, "")
-        if path and os.path.exists(path):
-            return path
-    path = os.path.join(ROOT, "database", "accounts", "xhs_account_02.db")
-    if os.path.exists(path):
-        return path
+    """返回主库路径。数据已合并，不再按账号分库。"""
     return os.path.join(ROOT, "database", "sqlite_tables.db")
 
 

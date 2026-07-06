@@ -25,7 +25,7 @@ PLATFORM = "xhs"  # Platform, xhs | dy | ks | bili | wb | tieba | zhihu
 # 开启后 API 走 webapi.rednote.com，cookie 域使用 .rednote.com
 XHS_INTERNATIONAL = False
 
-KEYWORDS = os.getenv("MEDIACRAWLER_KEYWORDS", "华为和苹果卡顿对比,华为和苹果性能对比,华为和苹果流畅度对比,华为和苹果稳定性对比,华为和苹果丝滑对比,华为稳定,华为丝滑,苹果丝滑,华为性能,苹果稳定,华为卡顿,苹果性能,苹果流畅,苹果卡顿,华为流畅")  # Keyword search configuration, separated by English commas
+KEYWORDS = os.getenv("MEDIACRAWLER_KEYWORDS", "华为流畅,华为性能,华为卡顿,华为丝滑,华为稳定,华为手机流畅,华为手机性能,华为手机卡顿,华为手机丝滑,华为手机稳定")  # Keyword search configuration, separated by English commas
 LOGIN_TYPE = "qrcode"  # qrcode or phone or cookie
 COOKIES = ""
 CRAWLER_TYPE = (
@@ -39,7 +39,7 @@ SORT_TYPE = os.getenv("MEDIACRAWLER_XHS_SORT_TYPE", "time_descending")
 
 # Note type filter, the specific enumeration value is in media_platform/xhs/field.py
 # all = 全部(图文+视频), video = 仅视频, image = 仅图文
-NOTE_TYPE = os.getenv("MEDIACRAWLER_XHS_NOTE_TYPE", "image")
+NOTE_TYPE = os.getenv("MEDIACRAWLER_XHS_NOTE_TYPE", "all")
 
 # 只入库该日期之后发布的小红书笔记。为空表示不过滤。
 # 支持格式：YYYY-MM-DD 或 YYYY-MM-DD HH:MM:SS；按本地时区解释。
@@ -127,9 +127,9 @@ BROWSER_LAUNCH_TIMEOUT = 60
 # 这种方式反检测效果最好，因为直接使用用户真实浏览器的所有 Cookie、扩展和浏览历史
 CDP_CONNECT_EXISTING = os.getenv("MEDIACRAWLER_CDP_CONNECT_EXISTING", "true").lower() in ("1", "true", "yes")
 
-# 程序结束时是否自动关闭浏览器
-# 设置为 False 可以保持浏览器运行，方便调试
-AUTO_CLOSE_BROWSER = True
+# 程序结束时是否自动关闭浏览器。
+# Dashboard 任务默认保持浏览器常驻，避免同一批任务/后续任务反复销毁再重开。
+AUTO_CLOSE_BROWSER = os.getenv("MEDIACRAWLER_AUTO_CLOSE_BROWSER", "false").lower() in ("1", "true", "yes")
 
 # Data saving type option configuration, supports: csv, db, json, jsonl, sqlite, excel, postgres. It is best to save to DB, with deduplication function.
 SAVE_DATA_OPTION = "sqlite"  # csv or db or json or jsonl or sqlite or excel or postgres
