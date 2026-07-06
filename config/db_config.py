@@ -48,19 +48,18 @@ CACHE_TYPE_MEMORY = "memory"
 
 # sqlite config
 # 默认数据库路径
-_DEFAULT_ACCOUNT = ""  # 空=基础库 sqlite_tables.db；设 "02"/"03"=对应账号库
+_DEFAULT_ACCOUNT = os.getenv("MEDIACRAWLER_ACCOUNT", "")  # 空=基础库 sqlite_tables.db；设 "02"/"03"=对应账号库
 
-# 账号 → 数据库路径映射（--account 参数用）
-_ACCOUNT_DB_MAP = {
-    "02": os.path.join(os.path.dirname(os.path.dirname(__file__)), "database", "accounts", "xhs_account_02.db"),
-    "03": os.path.join(os.path.dirname(os.path.dirname(__file__)), "database", "accounts", "xhs_account_03.db"),
-}
+def get_current_account() -> str:
+    """返回当前抓取账号标识，用于写入 crawler_account 字段。"""
+    return _DEFAULT_ACCOUNT or "default"
 
-# 当前生效的数据库路径
-SQLITE_DB_PATH = _ACCOUNT_DB_MAP.get(
-    _DEFAULT_ACCOUNT,
-    os.path.join(os.path.dirname(os.path.dirname(__file__)), "database", "sqlite_tables.db")
-)
+# 有效账号列表（--account 参数校验用）
+# 数据已合并至主库，所有账号共享 sqlite_tables.db，通过 crawler_account 字段区分
+_VALID_ACCOUNTS = {"01", "02", "03"}
+
+# 当前生效的数据库路径（固定主库）
+SQLITE_DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "database", "sqlite_tables.db")
 
 sqlite_db_config = {
     "db_path": SQLITE_DB_PATH

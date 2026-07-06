@@ -119,9 +119,11 @@ async def main() -> None:
 async def async_cleanup() -> None:
     global crawler
     if crawler:
-        if getattr(crawler, "cdp_manager", None):
+        if not getattr(config, "AUTO_CLOSE_BROWSER", False):
+            print("[Main] Browser cleanup skipped (AUTO_CLOSE_BROWSER=false).")
+        elif getattr(crawler, "cdp_manager", None):
             try:
-                await crawler.cdp_manager.cleanup(force=True)
+                await crawler.cdp_manager.cleanup(force=False)
             except Exception as e:
                 error_msg = str(e).lower()
                 if "closed" not in error_msg and "disconnected" not in error_msg:
@@ -142,6 +144,8 @@ if __name__ == "__main__":
     from tools.app_runner import run
 
     def _force_stop() -> None:
+        if not getattr(config, "AUTO_CLOSE_BROWSER", False):
+            return
         c = crawler
         if not c:
             return

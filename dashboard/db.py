@@ -18,44 +18,18 @@ MEDIACRAWLER_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if MEDIACRAWLER_ROOT not in sys.path:
     sys.path.insert(0, MEDIACRAWLER_ROOT)
 
-from config.db_config import _ACCOUNT_DB_MAP
-
-
-def _get_account_db_path(account: str = "02") -> str:
-    """Resolve crawler DB path by account identifier."""
-    if account in _ACCOUNT_DB_MAP:
-        path = _ACCOUNT_DB_MAP[account]
-        if os.path.exists(path):
-            return path
-    # Fallback: try accounts directory
-    fallback = os.path.join(MEDIACRAWLER_ROOT, "database", "accounts", f"xhs_account_{account}.db")
-    if os.path.exists(fallback):
-        return fallback
-    raise FileNotFoundError(f"No crawler DB found for account '{account}'")
+from config.db_config import SQLITE_DB_PATH
 
 
 def get_crawler_db_path(account: str = None) -> str:
     """Public entry point — resolve the crawler DB path.
 
-    Priority:
-    1. Explicit account parameter
-    2. Default base DB (sqlite_tables.db) if it exists and has data
-    3. Account 02, then 03 as fallback
+    数据已合并至主库，所有账号共享 sqlite_tables.db，通过 crawler_account 字段区分。
+    account 参数保留仅用于兼容旧调用。
     """
-    if account:
-        return _get_account_db_path(account)
-
-    # Check default base DB first (contains data for default/no-account crawls)
-    base_db = os.path.join(MEDIACRAWLER_ROOT, "database", "sqlite_tables.db")
-    if os.path.exists(base_db) and os.path.getsize(base_db) > 0:
-        return base_db
-
-    # Fallback: try account DBs
-    for acct in ["02", "03"]:
-        path = _ACCOUNT_DB_MAP.get(acct, "")
-        if path and os.path.exists(path):
-            return path
-    raise FileNotFoundError("No crawler DB found")
+    if not os.path.exists(SQLITE_DB_PATH) or os.path.getsize(SQLITE_DB_PATH) == 0:
+        raise FileNotFoundError(f"Main crawler DB not found or empty: {SQLITE_DB_PATH}")
+    return SQLITE_DB_PATH
 
 
 def _connect(db_path: str) -> sqlite3.Connection:
