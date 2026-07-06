@@ -220,3 +220,6 @@ dashboard/top100_video_function_posts.json
 *.out
 *.bak*
 database/.archive/
+
+# 本地审计报告交付物，不入库
+TECH_AUDIT_REPORT.md
