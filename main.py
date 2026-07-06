@@ -158,6 +158,7 @@ if __name__ == "__main__":
         try:
             launcher.cleanup()
         except Exception:
+            logger.exception(f"Unhandled exception in _force_stop()")
             pass
 
     run(main, async_cleanup, cleanup_timeout_seconds=15.0, on_first_interrupt=_force_stop)

@@ -29,6 +29,8 @@ import asyncio
 from pathlib import Path
 
 from tools import utils
+import logging
+logger = logging.getLogger("MediaCrawler")
 
 
 class BrowserLauncher:
@@ -204,6 +206,7 @@ class BrowserLauncher:
                         utils.logger.info(f"[BrowserLauncher] Browser is ready on port {debug_port}")
                         return True
             except Exception:
+                logger.exception(f"Unhandled exception in wait_for_browser_ready()")
                 pass
 
             time.sleep(0.5)
@@ -230,12 +233,14 @@ class BrowserLauncher:
                 result = subprocess.run([browser_path, "--version"],
                                       capture_output=True, text=True, encoding='utf-8', errors='ignore', timeout=5)
                 version = result.stdout.strip() if result.stdout else "Unknown Version"
-            except:
+            except Exception:
+                logger.exception(f"Unhandled exception in get_browser_info()")
                 version = "Unknown Version"
 
             return name, version
 
         except Exception:
+            logger.exception(f"Unhandled exception in get_browser_info()")
             return "Unknown Browser", "Unknown Version"
 
     def cleanup(self):

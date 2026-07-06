@@ -17,6 +17,8 @@ from crawl_task_manager import (
     set_crawl_worker_pid,
     start_crawl_task,
 )
+import logging
+logger = logging.getLogger("MediaCrawler")
 
 
 MEDIACRAWLER_ROOT = Path(__file__).resolve().parents[1]
@@ -146,6 +148,7 @@ def run_task(task_id: str) -> int:
             with log_path.open("a", encoding="utf-8", errors="replace") as log:
                 log.write(f"\n[error] {exc}\n")
         except Exception:
+            logger.exception(f"Unhandled exception in run_task()")
             pass
         return 1
 

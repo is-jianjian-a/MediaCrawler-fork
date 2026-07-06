@@ -95,6 +95,7 @@ def _is_crawler_running():
         )
         return bool(r.stdout.strip())
     except Exception:
+        logger.exception(f"Unhandled exception in _is_crawler_running()")
         return False
 
 
@@ -607,6 +608,7 @@ def api_crawl_status():
         comments = cur.fetchone()[0]
         conn.close()
     except Exception:
+        logger.exception(f"Unhandled exception in api_crawl_status()")
         posts, comments = 0, 0
     return jsonify({"running": running, "total_posts": posts, "total_comments": comments})
 
@@ -639,6 +641,7 @@ def api_finish_round():
                 current["comment_count"] = cur.fetchone()[0]
                 conn.close()
         except Exception:
+            logger.exception(f"Unhandled exception in api_finish_round()")
             current["post_count"] = -1
             current["comment_count"] = -1
 

@@ -19,6 +19,8 @@ if MEDIACRAWLER_ROOT not in sys.path:
     sys.path.insert(0, MEDIACRAWLER_ROOT)
 
 from config.db_config import SQLITE_DB_PATH
+import logging
+logger = logging.getLogger("MediaCrawler")
 
 
 def get_crawler_db_path(account: str = None) -> str:
@@ -56,6 +58,7 @@ def get_config_values():
         if keywords is not None:
             return keywords, (max_notes or 200)
     except Exception:
+        logger.exception(f"Unhandled exception in get_config_values()")
         pass
 
     # Fallback: parse base_config.py
@@ -72,6 +75,7 @@ def get_config_values():
         if m:
             max_notes = int(m.group(1))
     except Exception:
+        logger.exception(f"Unhandled exception in get_config_values()")
         pass
     return keywords, max_notes
 

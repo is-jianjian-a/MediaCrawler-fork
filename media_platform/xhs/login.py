@@ -32,6 +32,8 @@ from cache.cache_factory import CacheFactory
 from tools import utils
 
 from .exception import LoginError
+import logging
+logger = logging.getLogger("MediaCrawler")
 
 
 class XiaoHongShuLogin(AbstractLogin):
@@ -67,6 +69,7 @@ class XiaoHongShuLogin(AbstractLogin):
                 utils.logger.info("[XiaoHongShuLogin.check_login_state] Login status confirmed by UI element ('Me' button).")
                 return True
         except Exception:
+            logger.exception(f"Unhandled exception in check_login_state()")
             pass
 
         # 2. Alternative: Check for CAPTCHA prompt

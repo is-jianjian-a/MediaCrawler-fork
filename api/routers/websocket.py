@@ -51,6 +51,7 @@ class ConnectionManager:
             try:
                 await connection.send_json(message)
             except Exception:
+                logger.exception(f"Unhandled exception in broadcast()")
                 disconnected.append(connection)
 
         # Clean up disconnected connections
@@ -150,4 +151,5 @@ async def websocket_status(websocket: WebSocket):
     except WebSocketDisconnect:
         pass
     except Exception:
+        logger.exception(f"Unhandled exception in websocket_status()")
         pass

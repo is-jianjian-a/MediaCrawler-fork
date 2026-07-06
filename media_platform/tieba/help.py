@@ -299,6 +299,7 @@ class TieBaExtractor:
             decoded_value = json.loads(f'"{value}"')
             return decoded_value if isinstance(decoded_value, str) else str(decoded_value)
         except Exception:
+            logger.exception(f"Unhandled exception in _decode_js_string()")
             return value
 
     @classmethod

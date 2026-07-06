@@ -546,7 +546,8 @@ def generate_html_report(items: list, platform: str, keyword: str, output_path: 
             try:
                 import json
                 image_list = json.loads(image_list)
-            except:
+            except Exception:
+                logger.exception(f"Unhandled exception in generate_html_report()")
                 image_list = []
         item_type = item.get('type', 'normal')
         
@@ -562,7 +563,8 @@ def generate_html_report(items: list, platform: str, keyword: str, output_path: 
         try:
             if int(liked_count) > 1000:
                 hot_badge = '<span class="hot-badge">🔥 热门</span>'
-        except:
+        except Exception:
+            logger.exception(f"Unhandled exception in generate_html_report()")
             pass
         
         # 图片列表

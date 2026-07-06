@@ -87,6 +87,7 @@ def _cdp_websocket_from_active_port(port: int):
             if active_port == port and browser_path.startswith("/devtools/browser/"):
                 return f"ws://127.0.0.1:{active_port}{browser_path}"
         except Exception:
+            logger.exception(f"Unhandled exception in _cdp_websocket_from_active_port()")
             continue
     return ""
 
@@ -319,6 +320,7 @@ def get_process_info():
                         idx = cmd.split().index(part)
                         platform = cmd.split()[idx + 1] if idx + 1 < len(cmd.split()) else "unknown"
         except Exception:
+            logger.exception(f"Unhandled exception in get_process_info()")
             pass
         r = subprocess.run(
             ["ps", "-p", pids[0], "-o", "etime=,cpu=,rss="],
@@ -329,6 +331,7 @@ def get_process_info():
             return True, parts[0], float(parts[1]), int(parts[2]) // 1024, platform
         return True, "", 0.0, 0, platform
     except Exception:
+        logger.exception(f"Unhandled exception in get_process_info()")
         return False, "", 0.0, 0, "unknown"
 
 
@@ -352,6 +355,7 @@ def get_crawl_task_health():
         from crawl_task_manager import list_crawl_tasks
         tasks = list_crawl_tasks(archived=False)
     except Exception:
+        logger.exception(f"Unhandled exception in get_crawl_task_health()")
         return {
             "status": "unknown",
             "label": "状态未知",
@@ -476,9 +480,11 @@ def take_snapshot():
         conn2.commit()
         conn2.close()
     except Exception:
+        logger.exception(f"Unhandled exception in take_snapshot()")
         try:
             conn2.close()
         except Exception:
+            logger.exception(f"Unhandled exception in take_snapshot()")
             pass
 
 
@@ -592,6 +598,7 @@ def api_history():
             "process_alive": bool(r[3]), "active_keyword": r[4],
         } for r in rows])
     except Exception:
+        logger.exception(f"Unhandled exception in api_history()")
         return jsonify([])
 
 
@@ -1240,6 +1247,7 @@ def _pid_alive(pid) -> bool:
         os.kill(int(pid), 0)
         return True
     except Exception:
+        logger.exception(f"Unhandled exception in _pid_alive()")
         return False
 
 

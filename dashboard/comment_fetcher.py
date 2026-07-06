@@ -59,6 +59,7 @@ def cdp_websocket_from_active_port(port: int) -> str:
             if active_port == port and browser_path.startswith("/devtools/browser/"):
                 return f"ws://127.0.0.1:{active_port}{browser_path}"
         except Exception:
+            logger.exception(f"Unhandled exception in cdp_websocket_from_active_port()")
             continue
     return ""
 

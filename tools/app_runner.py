@@ -82,6 +82,7 @@ def run(
                 try:
                     on_first_interrupt()
                 except Exception:
+                    logger.exception(f"Unhandled exception in _on_signal()")
                     pass
 
             runner_task.cancel()

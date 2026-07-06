@@ -45,6 +45,8 @@ from .client import BaiduTieBaClient
 from .field import SearchNoteType, SearchSortType
 from .help import TieBaExtractor
 from .login import BaiduTieBaLogin
+import logging
+logger = logging.getLogger("MediaCrawler")
 
 
 class TieBaCrawler(AbstractCrawler):
@@ -561,6 +563,7 @@ class TieBaCrawler(AbstractCrawler):
                         utils.logger.info(f"[TieBaCrawler] Found Tieba link (selector: {selector})")
                         break
                 except Exception:
+                    logger.exception(f"Unhandled exception in _navigate_to_tieba_via_baidu()")
                     continue
 
             if not tieba_link:

@@ -77,7 +77,7 @@ class TestMongoDBRealConnection(unittest.TestCase):
                 for collection_name in test_collections:
                     try:
                         await db[collection_name].drop()
-                    except:
+                    except Exception:
                         pass
 
                 await conn.close()

@@ -23,6 +23,8 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
+import logging
+logger = logging.getLogger("MediaCrawler")
 
 router = APIRouter(prefix="/data", tags=["data"])
 
@@ -46,6 +48,7 @@ def get_file_info(file_path: Path) -> dict:
             with open(file_path, "r", encoding="utf-8") as f:
                 record_count = sum(1 for _ in f) - 1  # Subtract header row
     except Exception:
+        logger.exception(f"Unhandled exception in get_file_info()")
         pass
 
     return {
@@ -87,6 +90,7 @@ async def list_data_files(platform: Optional[str] = None, file_type: Optional[st
             try:
                 files.append(get_file_info(file_path))
             except Exception:
+                logger.exception(f"Unhandled exception in list_data_files()")
                 continue
 
     # Sort by modification time (newest first)
@@ -225,6 +229,7 @@ async def get_data_stats():
                         stats["by_platform"][platform] = stats["by_platform"].get(platform, 0) + 1
                         break
             except Exception:
+                logger.exception(f"Unhandled exception in get_data_stats()")
                 continue
 
     return stats

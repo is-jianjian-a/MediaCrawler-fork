@@ -32,6 +32,8 @@ import config
 from tools.browser_launcher import BrowserLauncher
 from tools import utils
 from tools.crawler_util import get_random_viewport
+import logging
+logger = logging.getLogger("MediaCrawler")
 
 
 class CDPBrowserManager:
@@ -222,6 +224,7 @@ class CDPBrowserManager:
                 sock.settimeout(0.5)
                 return sock.connect_ex(("127.0.0.1", debug_port)) == 0
         except Exception:
+            logger.exception(f"Unhandled exception in _is_port_open()")
             return False
 
     async def _get_browser_path(self) -> str:
@@ -513,7 +516,7 @@ class CDPBrowserManager:
                             if pages is not None:
                                 await self.browser_context.close()
                                 utils.logger.info("[CDPBrowserManager] Browser context closed")
-                        except:
+                        except Exception:
                             utils.logger.debug("[CDPBrowserManager] Browser context already closed")
                 except Exception as context_error:
                     # Only log warning if error is not due to already being closed
