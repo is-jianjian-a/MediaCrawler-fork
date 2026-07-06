@@ -213,3 +213,10 @@ database/**/*.db-wal
 
 # Local crawl selections may contain temporary xsec_token values
 dashboard/top100_video_function_posts.json
+
+# Build/run artifacts hygiene (added 2026-07-06, P0)
+*.sqbpro
+*.pid
+*.out
+*.bak*
+database/.archive/
