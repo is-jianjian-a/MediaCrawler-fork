@@ -26,6 +26,8 @@ import urllib.parse
 
 from model.m_xiaohongshu import NoteUrlInfo, CreatorUrlInfo
 from tools.crawler_util import extract_url_params_to_dict
+import logging
+logger = logging.getLogger("MediaCrawler")
 
 
 def sign(a1="", b1="", x_s="", x_t=""):
@@ -352,10 +354,10 @@ if __name__ == '__main__':
     # Get image URL addresses under multiple CDNs for a single image
     # final_img_urls = get_img_urls_by_trace_id(get_trace_id(_img_url))
     final_img_url = get_img_url_by_trace_id(get_trace_id(_img_url))
-    print(final_img_url)
+    logger.info(final_img_url)
 
     # Test creator URL parsing
-    print("\n=== Creator URL Parsing Test ===")
+    logger.info('\n=== Creator URL Parsing Test ===')
     test_creator_urls = [
         "https://www.xiaohongshu.com/user/profile/5eb8e1d400000000010075ae?xsec_token=AB1nWBKCo1vE2HEkfoJUOi5B6BE5n7wVrbdpHoWIj5xHw=&xsec_source=pc_feed",
         "5eb8e1d400000000010075ae",
@@ -363,8 +365,8 @@ if __name__ == '__main__':
     for url in test_creator_urls:
         try:
             result = parse_creator_info_from_url(url)
-            print(f"✓ URL: {url[:80]}...")
-            print(f"  Result: {result}\n")
+            logger.info(f'✓ URL: {url[:80]}...')
+            logger.info(f'  Result: {result}\n')
         except Exception as e:
-            print(f"✗ URL: {url}")
-            print(f"  Error: {e}\n")
+            logger.error(f'✗ URL: {url}')
+            logger.error(f'  Error: {e}\n')

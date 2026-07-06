@@ -29,6 +29,8 @@ from task_manager import (  # noqa: E402
     start_task,
     update_post_status,
 )
+import logging
+logger = logging.getLogger("MediaCrawler")
 
 
 def get_cdp_debug_port() -> int:
@@ -309,13 +311,13 @@ def main() -> int:
         cdp_ok, cdp_message = check_cdp_remote_debugging()
         if not cdp_ok and os.getenv("MEDIACRAWLER_REQUIRE_CDP", "false").lower() in ("1", "true", "yes"):
             parser.error(cdp_message)
-        print(f"[cdp] {cdp_message}")
+        logger.info(f'[cdp] {cdp_message}')
 
     posts = get_task_posts(args.task_id, status="failed" if args.retry_failed else "pending")
     if args.limit:
         posts = posts[:args.limit]
     if not posts:
-        print("No pending posts to process")
+        logger.info('No pending posts to process')
         return 0
 
     db_path = args.db_path
@@ -370,7 +372,7 @@ def main() -> int:
         executor.close()
 
     finish_task(args.task_id)
-    print(f"Task {args.task_id} {'finished' if all_ok else 'finished with errors'}; log={log_path}")
+    logger.info(f"Task {args.task_id} {('finished' if all_ok else 'finished with errors')}; log={log_path}")
     return 130 if interrupted else (0 if all_ok else 1)
 
 

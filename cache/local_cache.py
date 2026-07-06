@@ -29,6 +29,8 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from cache.abs_cache import AbstractCache
+import logging
+logger = logging.getLogger("MediaCrawler")
 
 
 class ExpiringLocalCache(AbstractCache):
@@ -131,10 +133,10 @@ class ExpiringLocalCache(AbstractCache):
 if __name__ == '__main__':
     cache = ExpiringLocalCache(cron_interval=2)
     cache.set('name', 'Programmer AJiang-Relakkes', 3)
-    print(cache.get('key'))
-    print(cache.keys("*"))
+    logger.info(cache.get('key'))
+    logger.info(cache.keys('*'))
     time.sleep(4)
-    print(cache.get('key'))
+    logger.info(cache.get('key'))
     del cache
     time.sleep(1)
-    print("done")
+    logger.info('done')

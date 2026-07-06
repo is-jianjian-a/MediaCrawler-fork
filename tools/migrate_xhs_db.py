@@ -10,6 +10,8 @@ if str(project_root) not in sys.path:
     sys.path.append(str(project_root))
 
 from config.db_config import SQLITE_DB_PATH
+import logging
+logger = logging.getLogger("MediaCrawler")
 
 def safe_convert_to_int(value):
     """安全地将值转换为整数"""
@@ -22,7 +24,7 @@ def safe_convert_to_int(value):
 
 def migrate_xhs_note(conn):
     """迁移xhs_note表"""
-    print("\n=== Migrating xhs_note ===")
+    logger.info('\n=== Migrating xhs_note ===')
     cursor = conn.cursor()
     
     # 1. 创建新表
@@ -58,7 +60,7 @@ def migrate_xhs_note(conn):
     # 2. 迁移数据
     cursor.execute('SELECT * FROM xhs_note')
     rows = cursor.fetchall()
-    print(f"Found {len(rows)} rows to migrate")
+    logger.info(f'Found {len(rows)} rows to migrate')
     
     for row in rows:
         # 原始列顺序（根据之前的PRAGMA table_info）:
@@ -109,11 +111,11 @@ def migrate_xhs_note(conn):
     cursor.execute('CREATE INDEX idx_xhs_note_time ON xhs_note(time)')
     
     conn.commit()
-    print("xhs_note migrated successfully")
+    logger.info('xhs_note migrated successfully')
 
 def migrate_xhs_note_comment(conn):
     """迁移xhs_note_comment表"""
-    print("\n=== Migrating xhs_note_comment ===")
+    logger.info('\n=== Migrating xhs_note_comment ===')
     cursor = conn.cursor()
     
     # 1. 创建新表
@@ -141,7 +143,7 @@ def migrate_xhs_note_comment(conn):
     # 2. 迁移数据
     cursor.execute('SELECT * FROM xhs_note_comment')
     rows = cursor.fetchall()
-    print(f"Found {len(rows)} rows to migrate")
+    logger.info(f'Found {len(rows)} rows to migrate')
     
     for row in rows:
         # 原始列顺序:
@@ -182,11 +184,11 @@ def migrate_xhs_note_comment(conn):
     cursor.execute('CREATE INDEX idx_xhs_note_comment_create_time ON xhs_note_comment(create_time)')
     
     conn.commit()
-    print("xhs_note_comment migrated successfully")
+    logger.info('xhs_note_comment migrated successfully')
 
 def migrate_xhs_creator(conn):
     """迁移xhs_creator表"""
-    print("\n=== Migrating xhs_creator ===")
+    logger.info('\n=== Migrating xhs_creator ===')
     cursor = conn.cursor()
     
     # 1. 创建新表
@@ -211,7 +213,7 @@ def migrate_xhs_creator(conn):
     # 2. 迁移数据
     cursor.execute('SELECT * FROM xhs_creator')
     rows = cursor.fetchall()
-    print(f"Found {len(rows)} rows to migrate")
+    logger.info(f'Found {len(rows)} rows to migrate')
     
     for row in rows:
         # 原始列顺序:
@@ -245,28 +247,28 @@ def migrate_xhs_creator(conn):
     cursor.execute('ALTER TABLE xhs_creator_new RENAME TO xhs_creator')
     
     conn.commit()
-    print("xhs_creator migrated successfully")
+    logger.info('xhs_creator migrated successfully')
 
 def verify_migration(conn):
     """验证迁移结果"""
-    print("\n=== Verifying Migration ===")
+    logger.info('\n=== Verifying Migration ===')
     cursor = conn.cursor()
     
     xhs_tables = ['xhs_note', 'xhs_note_comment', 'xhs_creator']
     for table_name in xhs_tables:
-        print(f"\nTable: {table_name}")
+        logger.info(f'\nTable: {table_name}')
         cursor.execute(f"PRAGMA table_info({table_name});")
         columns = cursor.fetchall()
-        print("Columns:")
+        logger.info('Columns:')
         for col in columns:
-            print(f"  {col[1]}: {col[2]}")
+            logger.info(f'  {col[1]}: {col[2]}')
         
         cursor.execute(f"SELECT COUNT(*) FROM {table_name};")
         count = cursor.fetchone()[0]
-        print(f"Row count: {count}")
+        logger.info(f'Row count: {count}')
 
 def main():
-    print(f"Database path: {SQLITE_DB_PATH}")
+    logger.info(f'Database path: {SQLITE_DB_PATH}')
     
     # 连接数据库
     conn = sqlite3.connect(SQLITE_DB_PATH)
@@ -280,10 +282,10 @@ def main():
         # 验证迁移
         verify_migration(conn)
         
-        print("\n=== Migration completed successfully! ===")
+        logger.info('\n=== Migration completed successfully! ===')
         
     except Exception as e:
-        print(f"\nError during migration: {e}")
+        logger.error(f'\nError during migration: {e}')
         conn.rollback()
         raise
     finally:

@@ -22,6 +22,8 @@ from typing import Set, Optional
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from ..services import crawler_manager
+import logging
+logger = logging.getLogger("MediaCrawler")
 
 router = APIRouter(tags=["websocket"])
 
@@ -71,7 +73,7 @@ async def log_broadcaster():
         except asyncio.CancelledError:
             break
         except Exception as e:
-            print(f"Log broadcaster error: {e}")
+            logger.error(f'Log broadcaster error: {e}')
             await asyncio.sleep(0.1)
 
 
@@ -89,24 +91,24 @@ def start_broadcaster():
 @router.websocket("/ws/logs")
 async def websocket_logs(websocket: WebSocket):
     """WebSocket log stream"""
-    print("[WS] New connection attempt")
+    logger.info('[WS] New connection attempt')
 
     try:
         # Ensure broadcast task is running
         start_broadcaster()
 
         await manager.connect(websocket)
-        print(f"[WS] Connected, active connections: {len(manager.active_connections)}")
+        logger.info(f'[WS] Connected, active connections: {len(manager.active_connections)}')
 
         # Send existing logs
         for log in crawler_manager.logs:
             try:
                 await websocket.send_json(log.model_dump())
             except Exception as e:
-                print(f"[WS] Error sending existing log: {e}")
+                logger.error(f'[WS] Error sending existing log: {e}')
                 break
 
-        print(f"[WS] Sent {len(crawler_manager.logs)} existing logs, entering main loop")
+        logger.info(f'[WS] Sent {len(crawler_manager.logs)} existing logs, entering main loop')
 
         while True:
             # Keep connection alive, receive heartbeat or any message
@@ -122,16 +124,16 @@ async def websocket_logs(websocket: WebSocket):
                 try:
                     await websocket.send_text("ping")
                 except Exception as e:
-                    print(f"[WS] Error sending ping: {e}")
+                    logger.error(f'[WS] Error sending ping: {e}')
                     break
 
     except WebSocketDisconnect:
-        print("[WS] Client disconnected")
+        logger.error('[WS] Client disconnected')
     except Exception as e:
-        print(f"[WS] Error: {type(e).__name__}: {e}")
+        logger.error(f'[WS] Error: {type(e).__name__}: {e}')
     finally:
         manager.disconnect(websocket)
-        print(f"[WS] Cleanup done, active connections: {len(manager.active_connections)}")
+        logger.info(f'[WS] Cleanup done, active connections: {len(manager.active_connections)}')
 
 
 @router.websocket("/ws/status")

@@ -26,6 +26,8 @@ import math
 from typing import List, Tuple
 
 import numpy as np
+import logging
+logger = logging.getLogger("MediaCrawler")
 
 
 # https://github.com/gdsmith/jquery.easing/blob/master/jquery.easing.js
@@ -87,4 +89,4 @@ def get_tracks(distance, seconds, ease_func) -> Tuple[List[int], List[int]]:
 
 if __name__ == '__main__':
     o, tl = get_tracks(129, 3, "ease_out_expo")
-    print(tl)
+    logger.info(tl)

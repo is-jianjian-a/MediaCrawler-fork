@@ -30,6 +30,8 @@ import os
 import re
 import sys
 from typing import List, Tuple
+import logging
+logger = logging.getLogger("MediaCrawler")
 
 # Project configuration
 REPO_URL = "https://github.com/NanmiCoder/MediaCrawler"
@@ -256,9 +258,9 @@ def main():
         # Assume this script is in tools/ directory
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-    print(f"Project root: {project_root}")
-    print(f"Mode: {'DRY RUN' if args.dry_run else 'UPDATE'}")
-    print("-" * 60)
+    logger.info(f'Project root: {project_root}')
+    logger.info(f"Mode: {('DRY RUN' if args.dry_run else 'UPDATE')}")
+    logger.info('-' * 60)
 
     # Get list of files to process
     if args.files:
@@ -268,7 +270,7 @@ def main():
         # Process all Python files
         files_to_process = find_python_files(project_root)
 
-    print(f"Found {len(files_to_process)} Python files to process\n")
+    logger.info(f'Found {len(files_to_process)} Python files to process\n')
 
     # Process files
     updated_count = 0
@@ -277,7 +279,7 @@ def main():
 
     for file_path in files_to_process:
         modified, message = process_file(file_path, project_root, args.dry_run or args.check)
-        print(message)
+        logger.info(message)
 
         if "Error" in message:
             error_count += 1
@@ -287,13 +289,13 @@ def main():
             skipped_count += 1
 
     # Print summary
-    print("\n" + "=" * 60)
-    print(f"Summary:")
-    print(f"  Total files: {len(files_to_process)}")
-    print(f"  Updated/Need update: {updated_count}")
-    print(f"  Already compliant: {skipped_count}")
-    print(f"  Errors: {error_count}")
-    print("=" * 60)
+    logger.info('\n' + '=' * 60)
+    logger.info(f'Summary:')
+    logger.info(f'  Total files: {len(files_to_process)}')
+    logger.info(f'  Updated/Need update: {updated_count}')
+    logger.info(f'  Already compliant: {skipped_count}')
+    logger.info(f'  Errors: {error_count}')
+    logger.info('=' * 60)
 
     # Return non-zero exit code in check mode if files need update
     if args.check and updated_count > 0:

@@ -1786,13 +1786,13 @@ def api_log_stats():
 # --- startup ---
 
 if __name__ == "__main__":
-    print(f"[dashboard] MediaCrawler root: {MEDIACRAWLER_ROOT}")
-    print(f"[dashboard] Crawler DB: {_crawler_db_path or 'NOT FOUND'}")
+    logger.info(f'[dashboard] MediaCrawler root: {MEDIACRAWLER_ROOT}')
+    logger.info(f"[dashboard] Crawler DB: {_crawler_db_path or 'NOT FOUND'}")
     ensure_crawler_db_indexes()
     init_dashboard_db()
     take_snapshot()
     bg = threading.Thread(target=snapshot_loop, daemon=True)
     bg.start()
-    print(f"[dashboard] Snapshot worker started (interval={SNAPSHOT_INTERVAL}s)")
-    print(f"[dashboard] Starting on http://{HOST}:{PORT}")
+    logger.info(f'[dashboard] Snapshot worker started (interval={SNAPSHOT_INTERVAL}s)')
+    logger.info(f'[dashboard] Starting on http://{HOST}:{PORT}')
     app.run(host=HOST, port=PORT, debug=False, threaded=True)

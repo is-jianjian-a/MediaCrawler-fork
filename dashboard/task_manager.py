@@ -26,6 +26,8 @@ import time
 import uuid
 from datetime import datetime
 from typing import Dict, List, Optional
+import logging
+logger = logging.getLogger("MediaCrawler")
 
 # --- config ---
 MEDIACRAWLER_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -477,48 +479,48 @@ def main():
         }
 
         task_id = create_task(args.name, posts, config)
-        print(f"Created task: {task_id}")
-        print(f"Total posts: {len(posts)}")
-        print(f"Batch size: {args.batch_size}")
-        print(f"Max comments per post: {args.max_comments}")
+        logger.info(f'Created task: {task_id}')
+        logger.info(f'Total posts: {len(posts)}')
+        logger.info(f'Batch size: {args.batch_size}')
+        logger.info(f'Max comments per post: {args.max_comments}')
 
     elif args.command == 'status':
         task = get_task(args.task_id)
         if not task:
-            print(f"Task not found: {args.task_id}")
+            logger.info(f'Task not found: {args.task_id}')
             return
 
-        print(f"Task: {task['name']} ({task['id']})")
-        print(f"Status: {task['status']}")
-        print(f"Created: {datetime.fromtimestamp(task['created_at']).strftime('%Y-%m-%d %H:%M:%S')}")
-        print(f"Total posts: {task['total_posts']}")
-        print(f"Completed: {task['completed_posts']}")
-        print(f"Failed: {task['failed_posts']}")
-        print(f"Progress: {task['completed_posts']}/{task['total_posts']} ({task['completed_posts']/task['total_posts']*100:.1f}%)")
-        print(f"Post status breakdown: {task.get('post_status', {})}")
+        logger.info(f"Task: {task['name']} ({task['id']})")
+        logger.info(f"Status: {task['status']}")
+        logger.info(f"Created: {datetime.fromtimestamp(task['created_at']).strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info(f"Total posts: {task['total_posts']}")
+        logger.info(f"Completed: {task['completed_posts']}")
+        logger.info(f"Failed: {task['failed_posts']}")
+        logger.info(f"Progress: {task['completed_posts']}/{task['total_posts']} ({task['completed_posts'] / task['total_posts'] * 100:.1f}%)")
+        logger.info(f"Post status breakdown: {task.get('post_status', {})}")
 
     elif args.command == 'list':
         tasks = list_tasks()
         if not tasks:
-            print("No tasks found")
+            logger.info('No tasks found')
             return
 
-        print(f"{'ID':<20} {'Name':<30} {'Status':<10} {'Progress':<15} {'Created'}")
-        print("-" * 100)
+        logger.info(f"{'ID':<20} {'Name':<30} {'Status':<10} {'Progress':<15} {'Created'}")
+        logger.info('-' * 100)
         for t in tasks:
             progress = f"{t['completed_posts']}/{t['total_posts']}"
             created = datetime.fromtimestamp(t['created_at']).strftime('%Y-%m-%d %H:%M')
-            print(f"{t['id']:<20} {t['name'][:28]:<30} {t['status']:<10} {progress:<15} {created}")
+            logger.info(f"{t['id']:<20} {t['name'][:28]:<30} {t['status']:<10} {progress:<15} {created}")
 
     elif args.command == 'complete':
         complete_task(args.task_id)
-        print(f"Task {args.task_id} marked as completed")
+        logger.info(f'Task {args.task_id} marked as completed')
 
     elif args.command == 'export':
         posts = get_task_posts(args.task_id)
         with open(args.output, 'w', encoding='utf-8') as f:
             json.dump(posts, f, ensure_ascii=False, indent=2)
-        print(f"Exported {len(posts)} posts to {args.output}")
+        logger.info(f'Exported {len(posts)} posts to {args.output}')
 
     else:
         parser.print_help()

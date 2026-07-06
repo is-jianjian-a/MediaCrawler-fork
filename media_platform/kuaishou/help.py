@@ -22,6 +22,8 @@
 
 import re
 from model.m_kuaishou import VideoUrlInfo, CreatorUrlInfo
+import logging
+logger = logging.getLogger("MediaCrawler")
 
 
 def parse_video_info_from_url(url: str) -> VideoUrlInfo:
@@ -78,7 +80,7 @@ def parse_creator_info_from_url(url: str) -> CreatorUrlInfo:
 
 if __name__ == '__main__':
     # Test video URL parsing
-    print("=== Video URL Parsing Test ===")
+    logger.info('=== Video URL Parsing Test ===')
     test_video_urls = [
         "https://www.kuaishou.com/short-video/3x3zxz4mjrsc8ke?authorId=3x84qugg4ch9zhs&streamSource=search&area=searchxxnull&searchKey=python",
         "3xf8enb8dbj6uig",
@@ -86,14 +88,14 @@ if __name__ == '__main__':
     for url in test_video_urls:
         try:
             result = parse_video_info_from_url(url)
-            print(f"✓ URL: {url[:80]}...")
-            print(f"  Result: {result}\n")
+            logger.info(f'✓ URL: {url[:80]}...')
+            logger.info(f'  Result: {result}\n')
         except Exception as e:
-            print(f"✗ URL: {url}")
-            print(f"  Error: {e}\n")
+            logger.error(f'✗ URL: {url}')
+            logger.error(f'  Error: {e}\n')
 
     # Test creator URL parsing
-    print("=== Creator URL Parsing Test ===")
+    logger.info('=== Creator URL Parsing Test ===')
     test_creator_urls = [
         "https://www.kuaishou.com/profile/3x84qugg4ch9zhs",
         "3x4sm73aye7jq7i",
@@ -101,8 +103,8 @@ if __name__ == '__main__':
     for url in test_creator_urls:
         try:
             result = parse_creator_info_from_url(url)
-            print(f"✓ URL: {url[:80]}...")
-            print(f"  Result: {result}\n")
+            logger.info(f'✓ URL: {url[:80]}...')
+            logger.info(f'  Result: {result}\n')
         except Exception as e:
-            print(f"✗ URL: {url}")
-            print(f"  Error: {e}\n")
+            logger.error(f'✗ URL: {url}')
+            logger.error(f'  Error: {e}\n')

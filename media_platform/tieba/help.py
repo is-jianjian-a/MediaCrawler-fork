@@ -30,6 +30,8 @@ from parsel import Selector
 from constant import baidu_tieba as const
 from model.m_baidu_tieba import TiebaComment, TiebaCreator, TiebaNote
 from tools import utils
+import logging
+logger = logging.getLogger("MediaCrawler")
 
 GENDER_MALE = "sex_male"
 GENDER_FEMALE = "sex_female"
@@ -827,7 +829,7 @@ class TieBaExtractor:
             unescaped_json_str = html.unescape(data_field_value)
             data_field_dict_value = json.loads(unescaped_json_str)
         except Exception as ex:
-            print(f"extract_data_field_value, error: {ex}, trying alternative parsing method")
+            logger.error(f'extract_data_field_value, error: {ex}, trying alternative parsing method')
             data_field_dict_value = {}
         return data_field_dict_value
 
@@ -837,7 +839,7 @@ def test_extract_search_note_list():
         content = f.read()
         extractor = TieBaExtractor()
         result = extractor.extract_search_note_list(content)
-        print(result)
+        logger.info(result)
 
 
 def test_extract_note_detail():
@@ -845,7 +847,7 @@ def test_extract_note_detail():
         content = f.read()
         extractor = TieBaExtractor()
         result = extractor.extract_note_detail(content)
-        print(result.model_dump())
+        logger.info(result.model_dump())
 
 
 def test_extract_tieba_note_parment_comments():
@@ -853,7 +855,7 @@ def test_extract_tieba_note_parment_comments():
         content = f.read()
         extractor = TieBaExtractor()
         result = extractor.extract_tieba_note_parment_comments(content, "123456")
-        print(result)
+        logger.info(result)
 
 
 def test_extract_tieba_note_sub_comments():
@@ -866,7 +868,7 @@ def test_extract_tieba_note_sub_comments():
                                             note_id="note_id", note_url="note_url", tieba_id="tieba_id",
                                             tieba_name="tieba_name", )
         result = extractor.extract_tieba_note_sub_comments(content, fake_parment_comment)
-        print(result)
+        logger.info(result)
 
 
 def test_extract_tieba_note_list():
@@ -874,7 +876,7 @@ def test_extract_tieba_note_list():
         content = f.read()
         extractor = TieBaExtractor()
         result = extractor.extract_tieba_note_list(content)
-        print(result)
+        logger.info(result)
     pass
 
 
@@ -883,7 +885,7 @@ def test_extract_creator_info():
         content = f.read()
         extractor = TieBaExtractor()
         result = extractor.extract_creator_info(content)
-        print(result.model_dump_json())
+        logger.info(result.model_dump_json())
 
 
 if __name__ == '__main__':

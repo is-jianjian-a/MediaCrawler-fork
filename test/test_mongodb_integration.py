@@ -28,6 +28,8 @@ from database.mongodb_store_base import MongoDBConnection, MongoDBStoreBase
 from store.xhs._store_impl import XhsMongoStoreImplement
 from store.douyin._store_impl import DouyinMongoStoreImplement
 from config import db_config
+import logging
+logger = logging.getLogger("MediaCrawler")
 
 
 class TestMongoDBRealConnection(unittest.TestCase):
@@ -38,10 +40,10 @@ class TestMongoDBRealConnection(unittest.TestCase):
             conn = MongoDBConnection()
             asyncio.run(conn._connect())
             cls.mongodb_available = True
-            print("\n✓ MongoDB connection successful")
+            logger.info('\n✓ MongoDB connection successful')
         except Exception as e:
             cls.mongodb_available = False
-            print(f"\n✗ MongoDB connection failed: {e}")
+            logger.error(f'\n✗ MongoDB connection failed: {e}')
 
     def setUp(self):
         if not self.mongodb_available:
@@ -82,9 +84,9 @@ class TestMongoDBRealConnection(unittest.TestCase):
 
             try:
                 asyncio.run(cleanup())
-                print("\n✓ Test data cleanup completed")
+                logger.info('\n✓ Test data cleanup completed')
             except Exception as e:
-                print(f"\n✗ Error cleaning up test data: {e}")
+                logger.error(f'\n✗ Error cleaning up test data: {e}')
 
     def test_real_connection(self):
         async def test():
@@ -361,24 +363,24 @@ def run_integration_tests():
 
 
 if __name__ == "__main__":
-    print("="*70)
-    print("MongoDB Storage Integration Test")
-    print("="*70)
-    print(f"MongoDB Configuration:")
-    print(f"  Host: {db_config.MONGODB_HOST}")
-    print(f"  Port: {db_config.MONGODB_PORT}")
-    print(f"  Database: {db_config.MONGODB_DB_NAME}")
-    print("="*70)
+    logger.info('=' * 70)
+    logger.info('MongoDB Storage Integration Test')
+    logger.info('=' * 70)
+    logger.info(f'MongoDB Configuration:')
+    logger.info(f'  Host: {db_config.MONGODB_HOST}')
+    logger.info(f'  Port: {db_config.MONGODB_PORT}')
+    logger.info(f'  Database: {db_config.MONGODB_DB_NAME}')
+    logger.info('=' * 70)
 
     result = run_integration_tests()
 
-    print("\n" + "="*70)
-    print("Test Statistics:")
-    print(f"Total tests: {result.testsRun}")
-    print(f"Passed: {result.testsRun - len(result.failures) - len(result.errors)}")
-    print(f"Failed: {len(result.failures)}")
-    print(f"Errors: {len(result.errors)}")
-    print(f"Skipped: {len(result.skipped)}")
-    print("="*70)
+    logger.info('\n' + '=' * 70)
+    logger.info('Test Statistics:')
+    logger.info(f'Total tests: {result.testsRun}')
+    logger.info(f'Passed: {result.testsRun - len(result.failures) - len(result.errors)}')
+    logger.info(f'Failed: {len(result.failures)}')
+    logger.info(f'Errors: {len(result.errors)}')
+    logger.info(f'Skipped: {len(result.skipped)}')
+    logger.info('=' * 70)
 
     sys.exit(0 if result.wasSuccessful() else 1)

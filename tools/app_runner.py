@@ -25,6 +25,8 @@ import os
 import signal
 from collections.abc import Awaitable, Callable
 from typing import Optional
+import logging
+logger = logging.getLogger("MediaCrawler")
 
 AsyncFn = Callable[[], Awaitable[None]]
 
@@ -41,7 +43,7 @@ def run(
         try:
             await asyncio.wait_for(asyncio.shield(app_cleanup()), timeout=cleanup_timeout_seconds)
         except asyncio.TimeoutError:
-            print(f"[Main] Cleanup timeout ({cleanup_timeout_seconds}s), skipping remaining cleanup.")
+            logger.error(f'[Main] Cleanup timeout ({cleanup_timeout_seconds}s), skipping remaining cleanup.')
 
     async def _cancel_remaining_tasks(timeout_seconds: float = 2.0) -> None:
         current = asyncio.current_task()
@@ -70,11 +72,11 @@ def run(
             nonlocal shutdown_requested
 
             if shutdown_requested:
-                print("[Main] Received interrupt signal again, force exit.")
+                logger.info('[Main] Received interrupt signal again, force exit.')
                 os._exit(force_exit_code)
 
             shutdown_requested = True
-            print(f"\n[Main] Received interrupt signal {signum}, exiting (cleanup max {cleanup_timeout_seconds}s)...")
+            logger.info(f'\n[Main] Received interrupt signal {signum}, exiting (cleanup max {cleanup_timeout_seconds}s)...')
 
             if on_first_interrupt is not None:
                 try:
@@ -100,7 +102,7 @@ def run(
             try:
                 await _cleanup_with_timeout()
             except Exception as e:
-                print(f"[Main] Error during cleanup: {e}")
+                logger.error(f'[Main] Error during cleanup: {e}')
             await _cancel_remaining_tasks()
 
         if cancelled:

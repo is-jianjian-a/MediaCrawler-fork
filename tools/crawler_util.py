@@ -59,7 +59,7 @@ async def find_login_qrcode(page: Page, selector: str) -> str:
         return login_qrcode_img
 
     except Exception as e:
-        print(e)
+        logger.error(e)
         return ""
 
 
@@ -309,6 +309,8 @@ async def check_and_adjust_crawler_count(
 
 import asyncio
 import random
+import logging
+logger = logging.getLogger("MediaCrawler")
 
 
 async def smart_sleep() -> None:
@@ -611,6 +613,6 @@ def generate_html_report(items: list, platform: str, keyword: str, output_path: 
     
     from tools import utils
     utils.logger.info(f"[generate_html_report] 测试报告已生成: {output_path}")
-    print(f"\n🎉 测试报告已生成: {output_path}")
-    print(f"📊 抓取数量: {len(items)}，展示数量: {max_items}")
-    print(f"🌐 请用浏览器打开查看\n")
+    logger.info(f'\n🎉 测试报告已生成: {output_path}')
+    logger.info(f'📊 抓取数量: {len(items)}，展示数量: {max_items}')
+    logger.info(f'🌐 请用浏览器打开查看\n')

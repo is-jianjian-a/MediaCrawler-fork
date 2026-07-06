@@ -16,6 +16,8 @@ from datetime import datetime
 import requests
 from dotenv import load_dotenv
 from flask import Flask, Response, jsonify, request, stream_with_context
+import logging
+logger = logging.getLogger("MediaCrawler")
 
 # Load .env
 load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
@@ -803,7 +805,7 @@ if __name__ == "__main__":
         _save_tasks(tasks)
 
     PORT = 18998
-    print(f"[explore] LLM model: {LLM_MODEL}")
-    print(f"[explore] LLM base: {LLM_BASE}")
-    print(f"[explore] Starting on http://0.0.0.0:{PORT}")
+    logger.info(f'[explore] LLM model: {LLM_MODEL}')
+    logger.info(f'[explore] LLM base: {LLM_BASE}')
+    logger.info(f'[explore] Starting on http://0.0.0.0:{PORT}')
     app.run(host="0.0.0.0", port=PORT, debug=False, threaded=True)

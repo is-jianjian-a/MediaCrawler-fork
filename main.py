@@ -45,6 +45,8 @@ from media_platform.xhs import XiaoHongShuCrawler
 from media_platform.zhihu import ZhihuCrawler
 from tools.async_file_writer import AsyncFileWriter
 from var import crawler_type_var
+import logging
+logger = logging.getLogger("MediaCrawler")
 
 
 class CrawlerFactory:
@@ -78,9 +80,9 @@ def _flush_excel_if_needed() -> None:
         from store.excel_store_base import ExcelStoreBase
 
         ExcelStoreBase.flush_all()
-        print("[Main] Excel files saved successfully")
+        logger.info('[Main] Excel files saved successfully')
     except Exception as e:
-        print(f"[Main] Error flushing Excel data: {e}")
+        logger.error(f'[Main] Error flushing Excel data: {e}')
 
 
 async def _generate_wordcloud_if_needed() -> None:
@@ -94,7 +96,7 @@ async def _generate_wordcloud_if_needed() -> None:
         )
         await file_writer.generate_wordcloud_from_comments()
     except Exception as e:
-        print(f"[Main] Error generating wordcloud: {e}")
+        logger.error(f'[Main] Error generating wordcloud: {e}')
 
 
 async def main() -> None:
@@ -103,7 +105,7 @@ async def main() -> None:
     args = await cmd_arg.parse_cmd()
     if args.init_db:
         await db.init_db(args.init_db)
-        print(f"Database {args.init_db} initialized successfully.")
+        logger.info(f'Database {args.init_db} initialized successfully.')
         return
 
     crawler = CrawlerFactory.create_crawler(platform=config.PLATFORM)
@@ -120,14 +122,14 @@ async def async_cleanup() -> None:
     global crawler
     if crawler:
         if not getattr(config, "AUTO_CLOSE_BROWSER", False):
-            print("[Main] Browser cleanup skipped (AUTO_CLOSE_BROWSER=false).")
+            logger.info('[Main] Browser cleanup skipped (AUTO_CLOSE_BROWSER=false).')
         elif getattr(crawler, "cdp_manager", None):
             try:
                 await crawler.cdp_manager.cleanup(force=False)
             except Exception as e:
                 error_msg = str(e).lower()
                 if "closed" not in error_msg and "disconnected" not in error_msg:
-                    print(f"[Main] Error cleaning up CDP browser: {e}")
+                    logger.error(f'[Main] Error cleaning up CDP browser: {e}')
 
         elif getattr(crawler, "browser_context", None):
             try:
@@ -135,7 +137,7 @@ async def async_cleanup() -> None:
             except Exception as e:
                 error_msg = str(e).lower()
                 if "closed" not in error_msg and "disconnected" not in error_msg:
-                    print(f"[Main] Error closing browser context: {e}")
+                    logger.error(f'[Main] Error closing browser context: {e}')
 
     if config.SAVE_DATA_OPTION in ("db", "sqlite"):
         await db.close()

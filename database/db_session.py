@@ -43,7 +43,7 @@ async def create_database_if_not_exists(db_type: str):
         await engine.dispose()
     elif db_type == "postgres":
         server_url = f"postgresql+asyncpg://{postgres_db_config['user']}:{postgres_db_config['password']}@{postgres_db_config['host']}:{postgres_db_config['port']}/postgres"
-        print(f"[init_db] Connecting to Postgres: host={postgres_db_config['host']}, port={postgres_db_config['port']}, user={postgres_db_config['user']}, dbname=postgres")
+        logger.info(f"[init_db] Connecting to Postgres: host={postgres_db_config['host']}, port={postgres_db_config['port']}, user={postgres_db_config['user']}, dbname=postgres")
         engine = create_async_engine(server_url, echo=False, isolation_level="AUTOCOMMIT")
         async with engine.connect() as conn:
             result = await conn.execute(text(f"SELECT 1 FROM pg_database WHERE datname = '{postgres_db_config['db_name']}'"))

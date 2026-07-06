@@ -32,6 +32,8 @@ from redis.exceptions import ResponseError
 
 from cache.abs_cache import AbstractCache
 from config import db_config
+import logging
+logger = logging.getLogger("MediaCrawler")
 
 
 class RedisCache(AbstractCache):
@@ -102,13 +104,13 @@ if __name__ == '__main__':
     redis_cache = RedisCache()
     # basic usage
     redis_cache.set("name", "Programmer AJiang-Relakkes", 1)
-    print(redis_cache.get("name"))  # Relakkes
-    print(redis_cache.keys("*"))  # ['name']
+    logger.info(redis_cache.get('name'))  # Relakkes
+    logger.info(redis_cache.keys('*'))  # ['name']
     time.sleep(2)
-    print(redis_cache.get("name"))  # None
+    logger.info(redis_cache.get('name'))  # None
 
     # special python type usage
     # list
     redis_cache.set("list", [1, 2, 3], 10)
     _value = redis_cache.get("list")
-    print(_value, f"value type:{type(_value)}")  # [1, 2, 3]
+    logger.info(" ".join(map(str, [_value, f'value type:{type(_value)}'])))  # [1, 2, 3]

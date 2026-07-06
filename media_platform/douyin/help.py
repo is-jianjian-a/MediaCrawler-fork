@@ -33,6 +33,8 @@ from playwright.async_api import Page
 
 from model.m_douyin import VideoUrlInfo, CreatorUrlInfo
 from tools.crawler_util import extract_url_params_to_dict
+import logging
+logger = logging.getLogger("MediaCrawler")
 
 douyin_sign_obj = execjs.compile(open('libs/douyin.js', encoding='utf-8-sig').read())
 
@@ -166,7 +168,7 @@ def parse_creator_info_from_url(url: str) -> CreatorUrlInfo:
 
 if __name__ == '__main__':
     # Test video URL parsing
-    print("=== Video URL Parsing Test ===")
+    logger.info('=== Video URL Parsing Test ===')
     test_urls = [
         "https://www.douyin.com/video/7525082444551310602",
         "https://www.douyin.com/user/MS4wLjABAAAATJPY7LAlaa5X-c8uNdWkvz0jUGgpw4eeXIwu_8BhvqE?from_tab_name=main&modal_id=7525082444551310602",
@@ -176,14 +178,14 @@ if __name__ == '__main__':
     for url in test_urls:
         try:
             result = parse_video_info_from_url(url)
-            print(f"✓ URL: {url[:80]}...")
-            print(f"  Result: {result}\n")
+            logger.info(f'✓ URL: {url[:80]}...')
+            logger.info(f'  Result: {result}\n')
         except Exception as e:
-            print(f"✗ URL: {url}")
-            print(f"  Error: {e}\n")
+            logger.error(f'✗ URL: {url}')
+            logger.error(f'  Error: {e}\n')
 
     # Test creator URL parsing
-    print("=== Creator URL Parsing Test ===")
+    logger.info('=== Creator URL Parsing Test ===')
     test_creator_urls = [
         "https://www.douyin.com/user/MS4wLjABAAAATJPY7LAlaa5X-c8uNdWkvz0jUGgpw4eeXIwu_8BhvqE?from_tab_name=main",
         "MS4wLjABAAAATJPY7LAlaa5X-c8uNdWkvz0jUGgpw4eeXIwu_8BhvqE",
@@ -191,8 +193,8 @@ if __name__ == '__main__':
     for url in test_creator_urls:
         try:
             result = parse_creator_info_from_url(url)
-            print(f"✓ URL: {url[:80]}...")
-            print(f"  Result: {result}\n")
+            logger.info(f'✓ URL: {url[:80]}...')
+            logger.info(f'  Result: {result}\n')
         except Exception as e:
-            print(f"✗ URL: {url}")
-            print(f"  Error: {e}\n")
+            logger.error(f'✗ URL: {url}')
+            logger.error(f'  Error: {e}\n')

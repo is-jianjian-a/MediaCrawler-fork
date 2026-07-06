@@ -25,6 +25,8 @@
 
 import time
 from datetime import datetime, timedelta, timezone
+import logging
+logger = logging.getLogger("MediaCrawler")
 
 
 def get_current_timestamp() -> int:
@@ -128,4 +130,4 @@ def rfc2822_to_timestamp(rfc2822_time):
 if __name__ == '__main__':
     # Example usage
     _rfc2822_time = "Sat Dec 23 17:12:54 +0800 2023"
-    print(rfc2822_to_china_datetime(_rfc2822_time))
+    logger.info(rfc2822_to_china_datetime(_rfc2822_time))

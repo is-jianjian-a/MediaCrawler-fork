@@ -30,6 +30,8 @@ from typing import Dict
 
 from model.m_bilibili import VideoUrlInfo, CreatorUrlInfo
 from tools import utils
+import logging
+logger = logging.getLogger("MediaCrawler")
 
 
 class BilibiliSign:
@@ -135,13 +137,13 @@ if __name__ == '__main__':
     # Test video URL parsing
     video_url1 = "https://www.bilibili.com/video/BV1dwuKzmE26/?spm_id_from=333.1387.homepage.video_card.click"
     video_url2 = "BV1d54y1g7db"
-    print("Video URL parsing test:")
-    print(f"URL1: {video_url1} -> {parse_video_info_from_url(video_url1)}")
-    print(f"URL2: {video_url2} -> {parse_video_info_from_url(video_url2)}")
+    logger.info('Video URL parsing test:')
+    logger.info(f'URL1: {video_url1} -> {parse_video_info_from_url(video_url1)}')
+    logger.info(f'URL2: {video_url2} -> {parse_video_info_from_url(video_url2)}')
 
     # Test creator URL parsing
     creator_url1 = "https://space.bilibili.com/434377496?spm_id_from=333.1007.0.0"
     creator_url2 = "20813884"
-    print("\nCreator URL parsing test:")
-    print(f"URL1: {creator_url1} -> {parse_creator_info_from_url(creator_url1)}")
-    print(f"URL2: {creator_url2} -> {parse_creator_info_from_url(creator_url2)}")
+    logger.info('\nCreator URL parsing test:')
+    logger.info(f'URL1: {creator_url1} -> {parse_creator_info_from_url(creator_url1)}')
+    logger.info(f'URL2: {creator_url2} -> {parse_creator_info_from_url(creator_url2)}')

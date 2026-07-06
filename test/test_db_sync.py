@@ -31,6 +31,8 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config.db_config import mysql_db_config, sqlite_db_config
 from database.models import Base
+import logging
+logger = logging.getLogger("MediaCrawler")
 
 def get_mysql_engine():
     """Create and return a MySQL database engine"""
@@ -100,34 +102,34 @@ def compare_schemas(db_schema, orm_schema):
 
 def print_diff(db_name, diff):
     """Print difference report"""
-    print(f"--- {db_name} Database Structure Difference Report ---")
+    logger.info(f'--- {db_name} Database Structure Difference Report ---')
     if not any(diff.values()):
-        print("Database structure matches ORM model, no synchronization needed.")
+        logger.info('Database structure matches ORM model, no synchronization needed.')
         return
 
     if diff.get("added_tables"):
-        print("\n[+] Added tables:")
+        logger.info('\n[+] Added tables:')
         for table in diff["added_tables"]:
-            print(f"  - {table}")
+            logger.info(f'  - {table}')
 
     if diff.get("deleted_tables"):
-        print("\n[-] Deleted tables:")
+        logger.info('\n[-] Deleted tables:')
         for table in diff["deleted_tables"]:
-            print(f"  - {table}")
+            logger.info(f'  - {table}')
 
     if diff.get("changed_tables"):
-        print("\n[*] Changed tables:")
+        logger.info('\n[*] Changed tables:')
         for table, changes in diff["changed_tables"].items():
-            print(f"  - {table}:")
+            logger.info(f'  - {table}:')
             if changes.get("added"):
-                print("    [+] Added fields:", ", ".join(changes["added"]))
+                logger.info(" ".join(map(str, ['    [+] Added fields:', ', '.join(changes['added'])])))
             if changes.get("deleted"):
-                print("    [-] Deleted fields:", ", ".join(changes["deleted"]))
+                logger.info(" ".join(map(str, ['    [-] Deleted fields:', ', '.join(changes['deleted'])])))
             if changes.get("modified"):
-                print("    [*] Modified fields:")
+                logger.info('    [*] Modified fields:')
                 for col, types in changes["modified"].items():
-                    print(f"      - {col}: {types[0]} -> {types[1]}")
-    print("--- End of Report ---")
+                    logger.info(f'      - {col}: {types[0]} -> {types[1]}')
+    logger.info('--- End of Report ---')
 
 
 def sync_database(engine, diff):
@@ -145,28 +147,28 @@ def sync_database(engine, diff):
     # Handle deleted tables
     for table_name in diff['deleted_tables']:
         op.drop_table(table_name)
-        print(f"Deleted table: {table_name}")
+        logger.info(f'Deleted table: {table_name}')
 
     # Handle added tables
     for table_name in diff['added_tables']:
         table = metadata.tables.get(table_name)
         if table is not None:
             table.create(engine)
-            print(f"Created table: {table_name}")
+            logger.info(f'Created table: {table_name}')
 
     # Handle field changes
     for table_name, changes in diff['changed_tables'].items():
         # Delete fields
         for col_name in changes['deleted']:
             op.drop_column(table_name, col_name)
-            print(f"Deleted field in table {table_name}: {col_name}")
+            logger.info(f'Deleted field in table {table_name}: {col_name}')
         # Add fields
         for col_name in changes['added']:
             table = metadata.tables.get(table_name)
             column = table.columns.get(col_name)
             if column is not None:
                 op.add_column(table_name, column)
-                print(f"Added field in table {table_name}: {col_name}")
+                logger.info(f'Added field in table {table_name}: {col_name}')
 
         # Modify fields
         for col_name, types in changes['modified'].items():
@@ -175,7 +177,7 @@ def sync_database(engine, diff):
                 column = table.columns.get(col_name)
                 if column is not None:
                     op.alter_column(table_name, col_name, type_=column.type)
-                    print(f"Modified field in table {table_name}: {col_name} (type changed to {column.type})")
+                    logger.info(f'Modified field in table {table_name}: {col_name} (type changed to {column.type})')
 
 
 def main():
@@ -192,9 +194,9 @@ def main():
             choice = input(">>> Manual confirmation required: Synchronize ORM model to MySQL database? (y/N): ")
             if choice.lower() == 'y':
                 sync_database(mysql_engine, mysql_diff)
-                print("MySQL database synchronization completed.")
+                logger.info('MySQL database synchronization completed.')
     except Exception as e:
-        print(f"Error processing MySQL: {e}")
+        logger.error(f'Error processing MySQL: {e}')
 
 
     # Handle SQLite
@@ -207,11 +209,11 @@ def main():
             choice = input(">>> Manual confirmation required: Synchronize ORM model to SQLite database? (y/N): ")
             if choice.lower() == 'y':
                 # Note: SQLite does not support ALTER COLUMN to modify field types, simplified handling here
-                print("Warning: SQLite has limited support for field modifications, this script will not execute field type modification operations.")
+                logger.info('Warning: SQLite has limited support for field modifications, this script will not execute field type modification operations.')
                 sync_database(sqlite_engine, sqlite_diff)
-                print("SQLite database synchronization completed.")
+                logger.info('SQLite database synchronization completed.')
     except Exception as e:
-        print(f"Error processing SQLite: {e}")
+        logger.error(f'Error processing SQLite: {e}')
 
 
 if __name__ == "__main__":

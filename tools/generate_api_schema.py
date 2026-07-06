@@ -12,6 +12,8 @@ from sqlalchemy import select
 from sqlalchemy.exc import OperationalError
 from database.db_session import get_session, get_async_engine
 from database.models import XhsNote, XhsNoteComment
+import logging
+logger = logging.getLogger("MediaCrawler")
 
 SAMPLE_LIMIT = 20
 OUTPUT_PATH = Path(__file__).resolve().parents[1] / "docs" / "xhs_api_schema.json"
@@ -112,7 +114,7 @@ async def fetch_raw_data_samples(model_class, limit):
                 except (json.JSONDecodeError, TypeError):
                     continue
     except OperationalError as e:
-        print(f"[generate_api_schema] 警告: {table_name} 表查询失败 ({e})，可能尚未迁移 raw_data 列，跳过")
+        logger.error(f'[generate_api_schema] 警告: {table_name} 表查询失败 ({e})，可能尚未迁移 raw_data 列，跳过')
     return samples
 
 
@@ -125,17 +127,17 @@ def build_merged_schema(samples):
 
 
 async def main():
-    print("[generate_api_schema] 从 XhsNote 表采样 raw_data ...")
+    logger.info('[generate_api_schema] 从 XhsNote 表采样 raw_data ...')
     note_samples = await fetch_raw_data_samples(XhsNote, SAMPLE_LIMIT)
-    print(f"[generate_api_schema] XhsNote 有效样本数: {len(note_samples)}")
+    logger.info(f'[generate_api_schema] XhsNote 有效样本数: {len(note_samples)}')
 
-    print("[generate_api_schema] 从 XhsNoteComment 表采样 raw_data ...")
+    logger.info('[generate_api_schema] 从 XhsNoteComment 表采样 raw_data ...')
     comment_samples = await fetch_raw_data_samples(XhsNoteComment, SAMPLE_LIMIT)
-    print(f"[generate_api_schema] XhsNoteComment 有效样本数: {len(comment_samples)}")
+    logger.info(f'[generate_api_schema] XhsNoteComment 有效样本数: {len(comment_samples)}')
 
     if not note_samples and not comment_samples:
-        print("[generate_api_schema] 错误: 两张表均无 raw_data 数据，无法推断 Schema")
-        print("[generate_api_schema] 请确认数据库中已存在 raw_data 列且有数据")
+        logger.info('[generate_api_schema] 错误: 两张表均无 raw_data 数据，无法推断 Schema')
+        logger.info('[generate_api_schema] 请确认数据库中已存在 raw_data 列且有数据')
 
     note_schema = build_merged_schema(note_samples) if note_samples else {}
     comment_schema = build_merged_schema(comment_samples) if comment_samples else {}
@@ -154,7 +156,7 @@ async def main():
     with open(OUTPUT_PATH, "w", encoding="utf-8") as f:
         json.dump(output, f, ensure_ascii=False, indent=2)
 
-    print(f"[generate_api_schema] Schema 已输出到: {OUTPUT_PATH}")
+    logger.info(f'[generate_api_schema] Schema 已输出到: {OUTPUT_PATH}')
 
     engine = get_async_engine()
     if engine:
