@@ -45,3 +45,13 @@ dependencies = [
 [[tool.uv.index]]
 url = "https://pypi.tuna.tsinghua.edu.cn/simple"
 default = true
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+exclude = [".venv", ".git", "__pycache__", "browser_data", "data", "cache", "logs"]
+
+[tool.ruff.lint]
+# 初版基线：仅启用高信噪比规则；后续随存量债务清理逐步收紧
+select = ["E", "F", "I", "W"]
+ignore = ["E402", "E501"]

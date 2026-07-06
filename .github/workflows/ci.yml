@@ -1,0 +1,69 @@
+# MediaCrawler CI 门禁
+#
+# 目标：把质量卡在合并前（对应技术审计 P1）。
+# - test   ：必过（pytest）。任何测试失败都会阻断合并。
+# - lint   ：ruff，当前为“建议”级（continue-on-error），存量 lint 债务清理后收紧为必过。
+# - type   ：mypy，当前为“建议”级（continue-on-error），存量类型注解补齐后收紧为必过。
+#
+# 触发：推送 main 或对 main 开 PR 时运行。
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Tests (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.11
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Run tests
+        run: uv run pytest tests/ -q
+
+  lint:
+    name: Lint (ruff) [advisory]
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Run ruff
+        run: uvx ruff check .
+
+  type-check:
+    name: Type check (mypy) [advisory]
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Run mypy
+        run: uvx mypy .

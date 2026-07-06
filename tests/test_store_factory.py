@@ -23,6 +23,7 @@ Unit tests for Store Factory functionality
 import pytest
 from unittest.mock import patch, MagicMock
 
+from store.excel_store_base import ExcelStoreBase
 from store.xhs import XhsStoreFactory
 from store.xhs._store_impl import (
     XhsCsvStoreImplement,
@@ -31,7 +32,6 @@ from store.xhs._store_impl import (
     XhsDbStoreImplement,
     XhsSqliteStoreImplement,
     XhsMongoStoreImplement,
-    XhsExcelStoreImplement
 )
 
 
@@ -71,9 +71,10 @@ class TestXhsStoreFactory:
     @patch('config.SAVE_DATA_OPTION', 'excel')
     def test_create_excel_store(self):
         """Test creating Excel store"""
-        # ContextVar cannot be mocked, so we test with actual value
+        # Excel 存储实现为 ExcelStoreBase 单例（XhsExcelStoreImplement 是其薄封装/别名），
+        # 工厂返回的实例类型即 ExcelStoreBase
         store = XhsStoreFactory.create_store()
-        assert isinstance(store, XhsExcelStoreImplement)
+        assert isinstance(store, ExcelStoreBase)
 
     @patch('config.SAVE_DATA_OPTION', 'jsonl')
     def test_create_jsonl_store(self):
