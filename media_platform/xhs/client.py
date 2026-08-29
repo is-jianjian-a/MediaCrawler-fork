@@ -35,7 +35,7 @@ from tools import utils
 if TYPE_CHECKING:
     from proxy.proxy_ip_pool import ProxyIpPool
 
-from .exception import DataFetchError, IPBlockError, NoteNotFoundError
+from .exception import DataFetchError, IPBlockError, NoteNotFoundError, RiskControlError
 from .field import SearchNoteType, SearchSortType
 from .help import get_search_id
 from .extractor import XiaoHongShuExtractor
@@ -112,7 +112,25 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
         self.headers.update(headers)
         return self.headers
 
-    @retry(stop=stop_after_attempt(3), wait=wait_fixed(1), retry=retry_if_not_exception_type(NoteNotFoundError))
+    @staticmethod
+    def _raise_if_risk_control(response: httpx.Response) -> None:
+        """Turn an explicit platform verification response into a terminal error."""
+        if response.status_code not in (461, 471):
+            return
+        verify_type = response.headers.get("Verifytype", "unknown")
+        verify_uuid = response.headers.get("Verifyuuid", "unknown")
+        msg = (
+            "CAPTCHA appeared, request failed, "
+            f"Verifytype: {verify_type}, Verifyuuid: {verify_uuid}, Response: {response}"
+        )
+        utils.logger.error(msg)
+        raise RiskControlError(msg)
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_fixed(1),
+        retry=retry_if_not_exception_type((NoteNotFoundError, RiskControlError)),
+    )
     async def request(self, method, url, **kwargs) -> Union[str, Any]:
         """
         Wrapper for httpx common request method, processes request response
@@ -132,13 +150,7 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
         async with make_async_client(proxy=self.proxy) as client:
             response = await client.request(method, url, timeout=self.timeout, **kwargs)
 
-        if response.status_code == 471 or response.status_code == 461:
-            # someday someone maybe will bypass captcha
-            verify_type = response.headers["Verifytype"]
-            verify_uuid = response.headers["Verifyuuid"]
-            msg = f"CAPTCHA appeared, request failed, Verifytype: {verify_type}, Verifyuuid: {verify_uuid}, Response: {response}"
-            utils.logger.error(msg)
-            raise Exception(msg)
+        self._raise_if_risk_control(response)
 
         if return_response:
             return response.text
@@ -211,6 +223,7 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
         async with make_async_client(proxy=self.proxy) as client:
             try:
                 response = await client.request("GET", url, timeout=self.timeout)
+                self._raise_if_risk_control(response)
                 response.raise_for_status()
                 if not response.reason_phrase == "OK":
                     utils.logger.error(
@@ -219,6 +232,8 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
                     return None
                 else:
                     return response.content
+            except RiskControlError:
+                raise
             except (
                 httpx.HTTPError
             ) as exc:  # some wrong when call httpx.request method, such as connection error, client error, server error or response status code is not 2xx
@@ -237,6 +252,7 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
         headers = await self._pre_headers(uri, params={})
         async with make_async_client(proxy=self.proxy) as client:
             response = await client.get(f"{self._host}{uri}", headers=headers)
+            self._raise_if_risk_control(response)
             if response.status_code == 200:
                 return response.json()
         return None
@@ -253,6 +269,8 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
             self_info: Dict = await self.query_self()
             if self_info and self_info.get("data", {}).get("result", {}).get("success"):
                 ping_flag = True
+        except RiskControlError:
+            raise
         except Exception as e:
             utils.logger.error(
                 f"[XiaoHongShuClient.pong] Check login state failed: {e}, and try to login again..."
@@ -458,10 +476,8 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
                     c.get("id") for c in new_comments if c.get("id")
                 )
             
-            # Inter-page delay: 3s (human scroll + read time)
-            await asyncio.sleep(3)
             result.extend(new_comments)
-            
+
             sub_comments = await self.get_comments_all_sub_comments(
                 comments=comments,
                 xsec_token=xsec_token,
@@ -471,6 +487,9 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
                 scan_counter=sub_comment_scan_counter,
             )
             result.extend(sub_comments)
+
+            # Inter-page delay after the complete current page has been persisted.
+            await asyncio.sleep(3)
         return result
 
     async def get_comments_all_sub_comments(
@@ -567,11 +586,15 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
                         result.extend(new_subs)
 
                         await asyncio.sleep(crawl_interval)
+                    except RiskControlError:
+                        raise
                     except Exception as e:
                         utils.logger.error(
                             f"[XiaoHongShuClient.get_comments_all_sub_comments] Error fetching sub-comments: {e}"
                         )
                         break
+            except RiskControlError:
+                raise
             except Exception as e:
                 utils.logger.error(
                     f"[XiaoHongShuClient.get_comments_all_sub_comments] Error processing comment: {e}"
@@ -710,7 +733,11 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
         data = {"original_url": f"{self._domain}/discovery/item/{note_id}"}
         return await self.post(uri, data=data, return_response=True)
 
-    @retry(stop=stop_after_attempt(3), wait=wait_fixed(1))
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_fixed(1),
+        retry=retry_if_not_exception_type(RiskControlError),
+    )
     async def get_note_by_id_from_html(
         self,
         note_id: str,

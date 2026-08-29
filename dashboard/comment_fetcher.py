@@ -13,13 +13,21 @@ import time
 import traceback
 import urllib.error
 import urllib.request
+from datetime import date, datetime
 from pathlib import Path
 from typing import Dict, Iterable, List
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 MEDIACRAWLER_ROOT = Path(__file__).resolve().parent.parent
 DASHBOARD_DIR = MEDIACRAWLER_ROOT / "dashboard"
+sys.path.insert(0, str(MEDIACRAWLER_ROOT))
 sys.path.insert(0, str(DASHBOARD_DIR))
+
+from tools.app_runner import RISK_CONTROL_EXIT_CODE
+try:
+    from dashboard.risk_policy import record_completion
+except ModuleNotFoundError:
+    from risk_policy import record_completion  # type: ignore[no-redef]
 
 from task_manager import (  # noqa: E402
     claim_task,
@@ -29,8 +37,61 @@ from task_manager import (  # noqa: E402
     start_task,
     update_post_status,
 )
+try:
+    from dashboard.rate_policy import (
+        COMMENTS_RATE,
+        DEFAULT_COMMENT_TASK_BATCH_DELAY,
+        DEFAULT_COMMENT_TASK_BATCH_SIZE,
+        DEFAULT_FIRST_LEVEL_COMMENTS,
+    )
+except ModuleNotFoundError:  # Support direct script execution.
+    from rate_policy import (  # type: ignore[no-redef]
+        COMMENTS_RATE,
+        DEFAULT_COMMENT_TASK_BATCH_DELAY,
+        DEFAULT_COMMENT_TASK_BATCH_SIZE,
+        DEFAULT_FIRST_LEVEL_COMMENTS,
+    )
 import logging
+import re
 logger = logging.getLogger("MediaCrawler")
+
+SYSTEM_CHROME_PATH = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+DEFAULT_COMMENT_PUBLISH_DATE_AFTER = "2000-01-01"
+
+
+def validate_standard_browser_path(browser_path: str) -> str:
+    """Require an explicit executable that is not the user's system Chrome."""
+    raw_path = str(browser_path or "").strip()
+    if not raw_path:
+        raise ValueError(
+            "standard browser mode requires an explicit isolated browser_path"
+        )
+    candidate = Path(raw_path).expanduser()
+    try:
+        resolved = candidate.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise ValueError(f"isolated browser_path does not exist: {candidate}") from exc
+    try:
+        system_chrome = SYSTEM_CHROME_PATH.resolve(strict=False)
+    except (OSError, RuntimeError):
+        system_chrome = SYSTEM_CHROME_PATH
+    if resolved == system_chrome:
+        raise ValueError("system Google Chrome is not allowed for automated comment tasks")
+    if not resolved.is_file() or not os.access(resolved, os.X_OK):
+        raise ValueError(f"isolated browser_path is not executable: {resolved}")
+    return str(resolved)
+
+
+def validate_comment_publish_date_after(value: str) -> str:
+    """Validate the explicit historical floor used by comment supplement tasks."""
+    raw_value = str(value or DEFAULT_COMMENT_PUBLISH_DATE_AFTER).strip()
+    try:
+        parsed = datetime.strptime(raw_value, "%Y-%m-%d").date()
+    except ValueError as exc:
+        raise ValueError("publish_date_after must use YYYY-MM-DD format") from exc
+    if parsed > date.today():
+        raise ValueError("publish_date_after must not be in the future")
+    return parsed.isoformat()
 
 
 def get_cdp_debug_port() -> int:
@@ -117,13 +178,29 @@ def chunks(items: List[Dict], size: int) -> Iterable[List[Dict]]:
 class CommentTaskExecutor:
     def __init__(self, db_path: str, max_comments: int, dry_run: bool = False,
                  user_data_dir: str = "%s_user_data_dir_account02",
-                 get_sub_comments: bool = False, max_sub_comments: int = 200):
+                 get_sub_comments: bool = False, max_sub_comments: int = 200,
+                 min_sleep: int = COMMENTS_RATE.min_sleep,
+                 max_sleep: int = COMMENTS_RATE.max_sleep,
+                 comment_sleep: int = COMMENTS_RATE.comment_sleep,
+                 max_concurrency: int = COMMENTS_RATE.max_concurrency,
+                 browser_path: str = "", inter_note_sleep: float = 0,
+                 publish_date_after: str = DEFAULT_COMMENT_PUBLISH_DATE_AFTER):
         self.db_path = os.path.abspath(db_path)
         self.max_comments = max_comments
         self.dry_run = dry_run
         self.user_data_dir = user_data_dir
         self.get_sub_comments = get_sub_comments
         self.max_sub_comments = max_sub_comments
+        self.min_sleep = min_sleep
+        self.max_sleep = max_sleep
+        self.comment_sleep = comment_sleep
+        self.max_concurrency = max_concurrency
+        self.browser_path = browser_path
+        self.inter_note_sleep = inter_note_sleep
+        self.publish_date_after = validate_comment_publish_date_after(
+            publish_date_after
+        )
+        self.last_exit_code = 0
         self.conn = sqlite3.connect(self.db_path, timeout=30)
         self.conn.row_factory = sqlite3.Row
 
@@ -174,7 +251,8 @@ class CommentTaskExecutor:
             "--save_data_option", "sqlite",
             "--max_comments_count_singlenotes", str(self.max_comments),
             "--max_sub_comments_count_singlenotes", str(self.max_sub_comments),
-            "--max_concurrency_num", "1",
+            "--max_concurrency_num", str(self.max_concurrency),
+            "--headless", "yes",
         ]
 
     def run_batch(self, task_id: str, posts: List[Dict], log_file) -> bool:
@@ -191,22 +269,27 @@ class CommentTaskExecutor:
                 )
                 print(f"[failed] {exc}", file=log_file, flush=True)
                 continue
-            update_post_status(task_id, note_id, "running", before, None, before)
             prepared.append((task_post, before, url))
 
         if not prepared:
+            self.last_exit_code = 1
             return False
 
         command = self.crawler_command([item[2] for item in prepared])
         printable = " ".join(json.dumps(part, ensure_ascii=False) for part in command)
         print(f"[command] {printable}", file=log_file, flush=True)
         if self.dry_run:
+            self.last_exit_code = 0
             print("[dry-run] crawler was not started", file=log_file, flush=True)
             for task_post, before, _ in prepared:
                 update_post_status(task_id, task_post["note_id"], "pending", before, None, before)
             return True
 
         try:
+            prepared_by_id = {
+                item[0]["note_id"]: (item[0], item[1]) for item in prepared
+            }
+            terminal_note_ids = set()
             process = subprocess.Popen(
                 command,
                 cwd=MEDIACRAWLER_ROOT,
@@ -220,10 +303,34 @@ class CommentTaskExecutor:
             assert process.stdout is not None
             for line in process.stdout:
                 print(line, end="", file=log_file, flush=True)
+                start_match = re.search(r"\[specified-note-start\] note_id=([^\s]+)", line)
+                complete_match = re.search(r"\[specified-note-complete\] note_id=([^\s]+)", line)
+                failed_match = re.search(r"\[specified-note-failed\] note_id=([^\s]+)", line)
+                if start_match and start_match.group(1) in prepared_by_id:
+                    note_id = start_match.group(1)
+                    _, before = prepared_by_id[note_id]
+                    update_post_status(task_id, note_id, "running", before, None, before)
+                if complete_match and complete_match.group(1) in prepared_by_id:
+                    note_id = complete_match.group(1)
+                    _, before = prepared_by_id[note_id]
+                    after = self.saved_comment_count(note_id)
+                    update_post_status(task_id, note_id, "completed", after, None, before)
+                    terminal_note_ids.add(note_id)
+                if failed_match and failed_match.group(1) in prepared_by_id:
+                    note_id = failed_match.group(1)
+                    _, before = prepared_by_id[note_id]
+                    after = self.saved_comment_count(note_id)
+                    update_post_status(
+                        task_id, note_id, "failed", after,
+                        "crawler failed while processing note", before,
+                    )
+                    terminal_note_ids.add(note_id)
             returncode = process.wait()
         except KeyboardInterrupt:
             for task_post, before, _ in prepared:
                 note_id = task_post["note_id"]
+                if note_id in terminal_note_ids:
+                    continue
                 after = self.saved_comment_count(note_id)
                 update_post_status(
                     task_id, note_id, "failed", after, "crawler interrupted", before
@@ -233,17 +340,23 @@ class CommentTaskExecutor:
             returncode = 1
             print(f"[crawler-launch-error] {exc}", file=log_file, flush=True)
 
+        self.last_exit_code = returncode
         success = returncode == 0
         for task_post, before, _ in prepared:
             note_id = task_post["note_id"]
+            if note_id in terminal_note_ids:
+                continue
             after = self.saved_comment_count(note_id)
-            error = None if success else f"crawler exited with code {returncode}"
+            error = (
+                "crawler exited without a per-note completion marker"
+                if success else f"crawler exited with code {returncode}"
+            )
             update_post_status(
-                task_id, note_id, "completed" if success else "failed",
+                task_id, note_id, "failed",
                 after, error, before,
             )
             print(
-                f"[{('completed' if success else 'failed')}] {note_id}: "
+                f"[failed] {note_id}: "
                 f"before={before} after={after} added={max(0, after - before)}",
                 file=log_file,
                 flush=True,
@@ -251,21 +364,24 @@ class CommentTaskExecutor:
         return success
 
     def crawler_environment(self) -> Dict[str, str]:
-        """Use standard browser mode for background tasks.
-
-        CDP can still be enabled explicitly with MEDIACRAWLER_ENABLE_CDP=true,
-        but dashboard tasks should not block on CDP availability.
-        """
+        """Use one explicitly configured isolated browser, never CDP."""
         env = os.environ.copy()
-        env.setdefault("MEDIACRAWLER_ENABLE_CDP", "false")
-        env.setdefault("MEDIACRAWLER_REQUIRE_CDP", "false")
-        env.setdefault("MEDIACRAWLER_CDP_DEBUG_PORT", str(get_cdp_debug_port()))
+        env["MEDIACRAWLER_ENABLE_CDP"] = "false"
+        env["MEDIACRAWLER_REQUIRE_CDP"] = "false"
         env.setdefault("MEDIACRAWLER_AUTO_CLOSE_BROWSER", "false")
-        env.setdefault("MEDIACRAWLER_CDP_CONNECT_EXISTING", "true")
-        default_chrome = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-        if os.path.exists(default_chrome):
-            env.setdefault("MEDIACRAWLER_BROWSER_PATH", default_chrome)
+        env["MEDIACRAWLER_CDP_CONNECT_EXISTING"] = "false"
+        env.pop("MEDIACRAWLER_CDP_ENDPOINT", None)
+        env["MEDIACRAWLER_BROWSER_PATH"] = validate_standard_browser_path(
+            self.browser_path
+        )
         env.setdefault("MEDIACRAWLER_USER_DATA_DIR", self.user_data_dir)
+        env["MEDIACRAWLER_ENABLE_RANDOM_SLEEP"] = "true"
+        env["MEDIACRAWLER_CRAWLER_MIN_SLEEP_SEC"] = str(self.min_sleep)
+        env["MEDIACRAWLER_CRAWLER_MAX_SLEEP_SEC"] = str(self.max_sleep)
+        env["MEDIACRAWLER_CRAWLER_COMMENT_SLEEP_SEC"] = str(self.comment_sleep)
+        env["MEDIACRAWLER_XHS_INTER_NOTE_SLEEP_SEC"] = str(self.inter_note_sleep)
+        env["MEDIACRAWLER_XHS_NOTE_PUBLISH_DATE_AFTER"] = self.publish_date_after
+        env["MEDIACRAWLER_MAX_CONCURRENCY_NUM"] = str(self.max_concurrency)
         return env
 
 
@@ -277,6 +393,12 @@ def main() -> int:
     parser.add_argument("--max-comments", type=int)
     parser.add_argument("--max-sub-comments", type=int)
     parser.add_argument("--delay", type=float)
+    parser.add_argument("--min-sleep", type=int)
+    parser.add_argument("--max-sleep", type=int)
+    parser.add_argument("--comment-sleep", type=int)
+    parser.add_argument("--max-concurrency", type=int)
+    parser.add_argument("--browser-path")
+    parser.add_argument("--publish-date-after")
     parser.add_argument("--limit", type=int, default=0, help="Only process N pending posts")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--retry-failed", action="store_true")
@@ -297,22 +419,52 @@ def main() -> int:
         task_config = json.loads(task.get("config_json") or "{}")
     except (TypeError, json.JSONDecodeError):
         task_config = {}
-    args.batch_size = args.batch_size or int(task_config.get("batch_size", 5))
-    args.max_comments = args.max_comments or int(task_config.get("max_comments", 200))
+    args.batch_size = args.batch_size or int(
+        task_config.get("batch_size", DEFAULT_COMMENT_TASK_BATCH_SIZE)
+    )
+    args.max_comments = args.max_comments or int(
+        task_config.get("max_comments", DEFAULT_FIRST_LEVEL_COMMENTS)
+    )
     if args.max_sub_comments is None:
         args.max_sub_comments = int(task_config.get("max_sub_comments", 200))
     if args.delay is None:
-        args.delay = float(task_config.get("delay", 5))
+        args.delay = float(task_config.get("delay", DEFAULT_COMMENT_TASK_BATCH_DELAY))
+    if args.min_sleep is None:
+        args.min_sleep = int(task_config.get("min_sleep", COMMENTS_RATE.min_sleep))
+    if args.max_sleep is None:
+        args.max_sleep = int(task_config.get("max_sleep", COMMENTS_RATE.max_sleep))
+    if args.comment_sleep is None:
+        args.comment_sleep = int(task_config.get("comment_sleep", COMMENTS_RATE.comment_sleep))
+    if args.max_concurrency is None:
+        args.max_concurrency = int(task_config.get("max_concurrency", COMMENTS_RATE.max_concurrency))
     if args.get_sub_comments is None:
         args.get_sub_comments = bool(task_config.get("get_sub_comments", False))
-    if args.batch_size < 1 or args.max_comments < 1 or args.max_sub_comments < 0:
-        parser.error("batch-size and max-comments must be positive")
+    if args.browser_path is None:
+        args.browser_path = str(task_config.get("browser_path", "") or "").strip()
+    if args.publish_date_after is None:
+        args.publish_date_after = task_config.get(
+            "publish_date_after", DEFAULT_COMMENT_PUBLISH_DATE_AFTER
+        )
+    if (
+        args.batch_size < 1
+        or args.max_comments < 1
+        or args.max_sub_comments < 0
+        or args.min_sleep < 0
+        or args.max_sleep < args.min_sleep
+        or args.comment_sleep < 1
+        or args.max_concurrency != 1
+    ):
+        parser.error("invalid task rate or count configuration")
 
     if os.getenv("MEDIACRAWLER_ENABLE_CDP", "false").lower() in ("1", "true", "yes"):
-        cdp_ok, cdp_message = check_cdp_remote_debugging()
-        if not cdp_ok and os.getenv("MEDIACRAWLER_REQUIRE_CDP", "false").lower() in ("1", "true", "yes"):
-            parser.error(cdp_message)
-        logger.info(f'[cdp] {cdp_message}')
+        parser.error("comment tasks require standard isolated browser mode; CDP is disabled")
+    try:
+        args.browser_path = validate_standard_browser_path(args.browser_path)
+        args.publish_date_after = validate_comment_publish_date_after(
+            args.publish_date_after
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
 
     posts = get_task_posts(args.task_id, status="failed" if args.retry_failed else "pending")
     if args.limit:
@@ -331,6 +483,8 @@ def main() -> int:
     executor = CommentTaskExecutor(
         db_path, args.max_comments, args.dry_run, args.user_data_dir,
         args.get_sub_comments, args.max_sub_comments,
+        args.min_sleep, args.max_sleep, args.comment_sleep, args.max_concurrency,
+        args.browser_path, args.delay, args.publish_date_after,
     )
     if not args.dry_run:
         if task["status"] in ("pending", "completed_with_errors"):
@@ -346,14 +500,27 @@ def main() -> int:
         start_task(args.task_id, str(log_path))
     all_ok = True
     interrupted = False
+    risk_control_stopped = False
     fatal_error = None
     try:
         with log_path.open("a", encoding="utf-8") as log_file:
-            for batch_number, batch in enumerate(chunks(posts, args.batch_size), 1):
-                print(f"[batch {batch_number}] posts={len(batch)}", file=log_file, flush=True)
-                all_ok = executor.run_batch(args.task_id, batch, log_file) and all_ok
-                if not args.dry_run and args.delay and batch_number * args.batch_size < len(posts):
-                    time.sleep(args.delay)
+            print(f"[task-run] posts={len(posts)} browser_launches=1", file=log_file, flush=True)
+            all_ok = executor.run_batch(args.task_id, posts, log_file)
+            if executor.last_exit_code == RISK_CONTROL_EXIT_CODE:
+                risk_control_stopped = True
+                error = "XHS risk control CAPTCHA (HTTP 461/471); remaining notes were not started"
+                print(f"[risk-control-stop] {error}", file=log_file, flush=True)
+                for pending_post in get_task_posts(args.task_id, status="pending"):
+                    note_id = pending_post["note_id"]
+                    count = executor.saved_comment_count(note_id)
+                    update_post_status(
+                        args.task_id,
+                        note_id,
+                        "failed",
+                        count,
+                        error,
+                        pending_post["comment_count_before"],
+                    )
     except KeyboardInterrupt:
         interrupted = True
         all_ok = False
@@ -372,9 +539,17 @@ def main() -> int:
     finally:
         executor.close()
 
+    final_exit_code = 130 if interrupted else (RISK_CONTROL_EXIT_CODE if risk_control_stopped else (0 if all_ok else 1))
     finish_task(args.task_id)
+    if not args.dry_run:
+        record_completion(
+            task_id=args.task_id,
+            task_kind="comment",
+            user_data_dir=args.user_data_dir,
+            exit_code=final_exit_code,
+        )
     logger.info(f"Task {args.task_id} {('finished' if all_ok else 'finished with errors')}; log={log_path}")
-    return 130 if interrupted else (0 if all_ok else 1)
+    return final_exit_code
 
 
 if __name__ == "__main__":

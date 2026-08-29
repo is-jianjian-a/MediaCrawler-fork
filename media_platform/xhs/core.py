@@ -22,7 +22,7 @@ import os
 import random
 from asyncio import Task
 from datetime import datetime
-from typing import Dict, List, Optional, Set
+from typing import Awaitable, Callable, Dict, List, Optional, Set
 
 from playwright.async_api import (
     BrowserContext,
@@ -44,7 +44,7 @@ from tools.cdp_browser import CDPBrowserManager
 from var import crawler_type_var, source_keyword_var, task_id_var
 
 from .client import XiaoHongShuClient
-from .exception import DataFetchError, LoginError, NoteNotFoundError
+from .exception import DataFetchError, LoginError, NoteNotFoundError, RiskControlError
 from .field import SearchSortType, SearchNoteType
 from .help import parse_note_info_from_note_url, parse_creator_info_from_url, get_search_id
 from .login import XiaoHongShuLogin
@@ -63,6 +63,22 @@ class XiaoHongShuCrawler(AbstractCrawler):
         self.user_agent = self.chrome_profile["ua"]
         self.cdp_manager = None
         self.ip_proxy_pool = None  # Proxy IP pool for automatic proxy refresh
+
+    @staticmethod
+    async def _gather_cancel_on_risk(awaitables: List[Awaitable]):
+        """Cancel sibling requests immediately when explicit risk control appears."""
+        tasks = [
+            item if isinstance(item, asyncio.Task) else asyncio.create_task(item)
+            for item in awaitables
+        ]
+        try:
+            return await asyncio.gather(*tasks)
+        except RiskControlError:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
 
     async def start(self) -> None:
         playwright_proxy_format, httpx_proxy_format = None, None
@@ -94,8 +110,9 @@ class XiaoHongShuCrawler(AbstractCrawler):
                 # stealth.min.js is a js script to prevent the website from detecting the crawler.
                 await self.browser_context.add_init_script(path="libs/stealth.min.js")
 
-            self.context_page = await self.browser_context.new_page()
-            await self.context_page.goto(self.index_url)
+            self.context_page = await self._get_or_create_context_page()
+            if not self.context_page.url.startswith(self.index_url):
+                await self.context_page.goto(self.index_url)
 
             # Create a client to interact with the Xiaohongshu website.
             self.xhs_client = await self.create_xhs_client(httpx_proxy_format)
@@ -120,6 +137,13 @@ class XiaoHongShuCrawler(AbstractCrawler):
             crawler_type_var.set(config.CRAWLER_TYPE)
             task_id_var.set(os.getenv("MEDIACRAWLER_TASK_ID", ""))
             if config.CRAWLER_TYPE == "search":
+                pre_search_delay = max(0, int(getattr(config, "XHS_PRE_SEARCH_DELAY_SEC", 0) or 0))
+                if pre_search_delay:
+                    utils.logger.info(
+                        "[XiaoHongShuCrawler.start] Browser ready; waiting %ss before first search request",
+                        pre_search_delay,
+                    )
+                    await asyncio.sleep(pre_search_delay)
                 # Search for notes and retrieve their comment information.
                 await self.search()
             elif config.CRAWLER_TYPE == "detail":
@@ -132,6 +156,24 @@ class XiaoHongShuCrawler(AbstractCrawler):
                 pass
 
             utils.logger.info("[XiaoHongShuCrawler.start] Xhs Crawler finished ...")
+
+    async def _get_or_create_context_page(self) -> Page:
+        """Reuse the crawler's existing XHS tab when connected over CDP.
+
+        Dashboard-managed CDP browsers stay alive between tasks. Reusing their
+        XHS tab avoids a visible new tab/window on every task start while the
+        standard isolated mode keeps its original one-page-per-process behavior.
+        """
+        if self.cdp_manager:
+            reusable_hosts = ("xiaohongshu.com", "rednote.com")
+            for page in reversed(self.browser_context.pages):
+                if any(host in (page.url or "") for host in reusable_hosts):
+                    utils.logger.info(
+                        "[XiaoHongShuCrawler] Reusing existing crawler page: %s",
+                        page.url,
+                    )
+                    return page
+        return await self.browser_context.new_page()
 
     async def _should_skip_keyword(self, keyword: str) -> tuple:
         """Check if keyword should be skipped due to smart crawler logic.
@@ -252,6 +294,8 @@ class XiaoHongShuCrawler(AbstractCrawler):
                     await self.get_notice_media(data_to_store)
                 existing_ids_set.add(data_to_store.get("note_id", note_id))
                 return True, existing_ids_set, 1, is_fallback, False
+            except RiskControlError:
+                raise
             except Exception as e:
                 utils.logger.error(f"[XiaoHongShuCrawler.search] Failed to store note {data_to_store.get('note_id', note_id)}: {e}")
                 existing_ids_set.add(note_id)
@@ -298,6 +342,9 @@ class XiaoHongShuCrawler(AbstractCrawler):
         """Search for notes and retrieve their comment information."""
         utils.logger.info("[XiaoHongShuCrawler.search] Begin search Xiaohongshu keywords")
         start_page = config.START_PAGE
+        utils.logger.info(
+            f"[XiaoHongShuCrawler.search] Configured start page: {start_page}"
+        )
 
         for keyword in config.KEYWORDS.split(","):
             if not keyword.strip():
@@ -404,6 +451,19 @@ class XiaoHongShuCrawler(AbstractCrawler):
 
                     consecutive_empty_pages = 0
 
+                    persisted_results: List[Optional[tuple]] = [None] * len(filtered_items)
+
+                    async def persist_search_detail(index: int, note_detail: Dict) -> bool:
+                        note_id = filtered_items[index].get("id")
+                        persisted_results[index] = await self._store_note_detail(
+                            note_detail,
+                            note_id,
+                            existing_ids_set,
+                            test_mode_items,
+                            search_list_fallback=filtered_items[index],
+                        )
+                        return bool(persisted_results[index][0])
+
                     task_list = [
                         self.get_note_detail_async_task(
                             note_id=post_item.get("id"),
@@ -411,10 +471,13 @@ class XiaoHongShuCrawler(AbstractCrawler):
                             xsec_token=post_item.get("xsec_token"),
                             semaphore=semaphore,
                             skip_detail=post_item.get("_skip_detail", False),
-                        ) for post_item in filtered_items
+                            detail_callback=(
+                                lambda note_detail, index=index: persist_search_detail(index, note_detail)
+                            ),
+                        ) for index, post_item in enumerate(filtered_items)
                     ]
-                    note_details = await asyncio.gather(*task_list)
-                    api_detail_count += len(task_list)
+                    note_details = await self._gather_cancel_on_risk(task_list)
+                    api_detail_count += new_count
 
                     note_ids: List[str] = []
                     xsec_tokens: List[str] = []
@@ -425,11 +488,14 @@ class XiaoHongShuCrawler(AbstractCrawler):
                         note_id = filtered_items[idx].get("id")
                         skip_detail = filtered_items[idx].get("_skip_detail", False)
                         total_attempted += 1
-                        success, existing_ids_set, stored_delta, is_fallback, is_before_threshold = await self._store_note_detail(
-                            note_detail, note_id, existing_ids_set, test_mode_items,
-                            search_list_fallback=filtered_items[idx],
-                            skip_detail=skip_detail,
-                        )
+                        store_result = persisted_results[idx]
+                        if store_result is None:
+                            store_result = await self._store_note_detail(
+                                note_detail, note_id, existing_ids_set, test_mode_items,
+                                search_list_fallback=filtered_items[idx],
+                                skip_detail=skip_detail,
+                            )
+                        success, existing_ids_set, stored_delta, is_fallback, is_before_threshold = store_result
                         if (
                             is_before_threshold
                             and getattr(config, "XHS_STOP_WHEN_BEFORE_DATE", False)
@@ -470,7 +536,8 @@ class XiaoHongShuCrawler(AbstractCrawler):
 
                     page += 1
                     await self.batch_get_note_comments(note_ids, xsec_tokens)
-                    api_comment_count += len(note_ids)
+                    if config.ENABLE_GET_COMMENTS:
+                        api_comment_count += len(note_ids)
 
                     await smart_sleep()
                     utils.logger.debug(f"Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after page {page-1}")
@@ -576,47 +643,68 @@ class XiaoHongShuCrawler(AbstractCrawler):
                 xsec_source=post_item.get("xsec_source"),
                 xsec_token=post_item.get("xsec_token"),
                 semaphore=semaphore,
+                detail_callback=self._persist_fetched_note_detail,
             ) for post_item in note_list
         ]
 
-        note_details = await asyncio.gather(*task_list)
-        for note_detail in note_details:
-            if note_detail and self._should_store_note_by_publish_time(
-                note_detail, note_detail.get("note_id", "")
-            ):
-                await xhs_store.update_xhs_note(note_detail)
-                await self.get_notice_media(note_detail)
+        await self._gather_cancel_on_risk(task_list)
 
     async def get_specified_notes(self):
-        """Get the information and comments of the specified post
+        """Persist each specified note and its comments before advancing.
 
         Note: Must specify note_id, xsec_source, xsec_token
         """
-        get_note_detail_task_list = []
         semaphore = asyncio.Semaphore(config.MAX_CONCURRENCY_NUM)
-        for full_note_url in config.XHS_SPECIFIED_NOTE_URL_LIST:
-            note_url_info: NoteUrlInfo = parse_note_info_from_note_url(full_note_url)
-            utils.logger.info(f"[XiaoHongShuCrawler.get_specified_notes] Parse note url info: {note_url_info}")
-            crawler_task = self.get_note_detail_async_task(
-                note_id=note_url_info.note_id,
-                xsec_source=note_url_info.xsec_source,
-                xsec_token=note_url_info.xsec_token,
-                semaphore=semaphore,
-            )
-            get_note_detail_task_list.append(crawler_task)
+        urls = config.XHS_SPECIFIED_NOTE_URL_LIST
+        for index, full_note_url in enumerate(urls):
+            note_id = ""
+            try:
+                note_url_info: NoteUrlInfo = parse_note_info_from_note_url(full_note_url)
+                note_id = note_url_info.note_id
+                utils.logger.info(f"[specified-note-start] note_id={note_id}")
+                utils.logger.info(f"[XiaoHongShuCrawler.get_specified_notes] Parse note url info: {note_url_info}")
+                note_detail = await self.get_note_detail_async_task(
+                    note_id=note_id,
+                    xsec_source=note_url_info.xsec_source,
+                    xsec_token=note_url_info.xsec_token,
+                    semaphore=semaphore,
+                    detail_callback=self._persist_fetched_note_detail,
+                )
+                if not note_detail:
+                    utils.logger.error(f"[specified-note-failed] note_id={note_id} error=detail_unavailable")
+                    continue
+                if self._should_store_note_by_publish_time(note_detail, note_id):
+                    await self.batch_get_note_comments(
+                        [note_id],
+                        [note_detail.get("xsec_token", note_url_info.xsec_token)],
+                    )
+                utils.logger.info(f"[specified-note-complete] note_id={note_id}")
+            except RiskControlError:
+                raise
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                utils.logger.error(
+                    f"[specified-note-failed] note_id={note_id or '<unknown>'} "
+                    f"error={type(exc).__name__}:{exc}"
+                )
 
-        need_get_comment_note_ids = []
-        xsec_tokens = []
-        note_details = await asyncio.gather(*get_note_detail_task_list)
-        for note_detail in note_details:
-            if note_detail and self._should_store_note_by_publish_time(
-                note_detail, note_detail.get("note_id", "")
-            ):
-                need_get_comment_note_ids.append(note_detail.get("note_id", ""))
-                xsec_tokens.append(note_detail.get("xsec_token", ""))
-                await xhs_store.update_xhs_note(note_detail)
-                await self.get_notice_media(note_detail)
-        await self.batch_get_note_comments(need_get_comment_note_ids, xsec_tokens)
+            inter_note_sleep = float(
+                getattr(config, "XHS_INTER_NOTE_SLEEP_SEC", 0) or 0
+            )
+            if index + 1 < len(urls) and inter_note_sleep > 0:
+                utils.logger.info(
+                    f"[specified-note-wait] sleeping {inter_note_sleep}s before next note"
+                )
+                await asyncio.sleep(inter_note_sleep)
+
+    async def _persist_fetched_note_detail(self, note_detail: Dict) -> bool:
+        note_id = note_detail.get("note_id", "")
+        if not self._should_store_note_by_publish_time(note_detail, note_id):
+            return True
+        await xhs_store.update_xhs_note(note_detail)
+        await self.get_notice_media(note_detail)
+        return True
 
     async def get_note_detail_async_task(
         self,
@@ -625,6 +713,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
         xsec_token: str,
         semaphore: asyncio.Semaphore,
         skip_detail: bool = False,
+        detail_callback: Optional[Callable[[Dict], Awaitable[bool]]] = None,
     ) -> Optional[Dict]:
         """Get note detail. If skip_detail=True, return empty dict to avoid API call."""
         if skip_detail:
@@ -660,6 +749,15 @@ class XiaoHongShuCrawler(AbstractCrawler):
 
                 note_detail.update({"xsec_token": xsec_token, "xsec_source": xsec_source})
                 utils.logger.info(f"[detail] fetched note detail note_id={note_id}")
+
+                if detail_callback:
+                    persisted = await detail_callback(note_detail)
+                    if not persisted:
+                        utils.logger.warning(
+                            f"[detail] persistence failed note_id={note_id}; skip post-fetch sleep"
+                        )
+                        return note_detail
+                    utils.logger.info(f"[detail] persisted note detail note_id={note_id}")
 
                 # Sleep after fetching note detail
                 await smart_sleep()
@@ -704,7 +802,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
                 name=note_id,
             )
             task_list.append(task)
-        await asyncio.gather(*task_list)
+        await self._gather_cancel_on_risk(task_list)
 
     async def _get_existing_comment_ids(self, store, note_id: str) -> Set[str]:
         """Fetch existing comment_ids for a note from DB"""
@@ -738,6 +836,8 @@ class XiaoHongShuCrawler(AbstractCrawler):
                         utils.logger.info(f"[comments] refreshed note detail skipped by publish filter note_id={note_id}")
                 else:
                     utils.logger.warning(f"[comments] note detail refresh returned empty note_id={note_id}")
+            except RiskControlError:
+                raise
             except Exception as exc:
                 utils.logger.warning(f"[comments] note detail refresh failed note_id={note_id}: {exc}")
 
@@ -809,7 +909,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
             if os.path.exists(default_chrome_path):
                 launch_options["executable_path"] = default_chrome_path
         if config.SAVE_LOGIN_STATE:
-            user_data_dir = os.path.join(os.getcwd(), "browser_data", config.USER_DATA_DIR % config.PLATFORM)  # type: ignore
+            user_data_dir = os.path.join(os.getcwd(), "browser_data", config.USER_DATA_DIR % config.PLATFORM)
             browser_context = await chromium.launch_persistent_context(
                 user_data_dir=user_data_dir,
                 accept_downloads=True,

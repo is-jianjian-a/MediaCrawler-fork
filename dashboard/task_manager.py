@@ -70,6 +70,8 @@ def init_task_db():
         conn.execute("ALTER TABLE tasks ADD COLUMN worker_pid INTEGER")
     if "archived_at" not in existing_cols:
         conn.execute("ALTER TABLE tasks ADD COLUMN archived_at REAL")
+    if "group_tag" not in existing_cols:
+        conn.execute("ALTER TABLE tasks ADD COLUMN group_tag TEXT DEFAULT ''")
     conn.execute("""
         CREATE TABLE IF NOT EXISTS task_posts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -94,15 +96,15 @@ def init_task_db():
     conn.close()
 
 
-def create_task(name: str, posts: List[Dict], config: Dict) -> str:
+def create_task(name: str, posts: List[Dict], config: Dict, group_tag: str = "") -> str:
     """Create a new comment supplement task."""
     task_id = f"task-{uuid.uuid4().hex[:8]}"
     conn = sqlite3.connect(TASK_DB)
 
     conn.execute(
-        """INSERT INTO tasks (id, name, status, created_at, total_posts, config_json)
-           VALUES (?, ?, 'pending', ?, ?, ?)""",
-        (task_id, name, time.time(), len(posts), json.dumps(config, ensure_ascii=False))
+        """INSERT INTO tasks (id, name, status, created_at, total_posts, config_json, group_tag)
+           VALUES (?, ?, 'pending', ?, ?, ?, ?)""",
+        (task_id, name, time.time(), len(posts), json.dumps(config, ensure_ascii=False), (group_tag or "")[:40])
     )
 
     for post in posts:

@@ -42,6 +42,7 @@ from media_platform.kuaishou import KuaishouCrawler
 from media_platform.tieba import TieBaCrawler
 from media_platform.weibo import WeiboCrawler
 from media_platform.xhs import XiaoHongShuCrawler
+from media_platform.xhs.exception import RiskControlError
 from media_platform.zhihu import ZhihuCrawler
 from tools.async_file_writer import AsyncFileWriter
 from var import crawler_type_var
@@ -125,7 +126,7 @@ async def async_cleanup() -> None:
             logger.info('[Main] Browser cleanup skipped (AUTO_CLOSE_BROWSER=false).')
         elif getattr(crawler, "cdp_manager", None):
             try:
-                await crawler.cdp_manager.cleanup(force=False)
+                await getattr(crawler, "cdp_manager").cleanup(force=False)
             except Exception as e:
                 error_msg = str(e).lower()
                 if "closed" not in error_msg and "disconnected" not in error_msg:
@@ -133,7 +134,7 @@ async def async_cleanup() -> None:
 
         elif getattr(crawler, "browser_context", None):
             try:
-                await crawler.browser_context.close()
+                await getattr(crawler, "browser_context").close()
             except Exception as e:
                 error_msg = str(e).lower()
                 if "closed" not in error_msg and "disconnected" not in error_msg:
@@ -143,7 +144,7 @@ async def async_cleanup() -> None:
         await db.close()
 
 if __name__ == "__main__":
-    from tools.app_runner import run
+    from tools.app_runner import RISK_CONTROL_EXIT_CODE, run
 
     def _force_stop() -> None:
         if not getattr(config, "AUTO_CLOSE_BROWSER", False):
@@ -161,4 +162,8 @@ if __name__ == "__main__":
             logger.exception(f"Unhandled exception in _force_stop()")
             pass
 
-    run(main, async_cleanup, cleanup_timeout_seconds=15.0, on_first_interrupt=_force_stop)
+    try:
+        run(main, async_cleanup, cleanup_timeout_seconds=15.0, on_first_interrupt=_force_stop)
+    except RiskControlError as exc:
+        logger.error(f"[risk-control-stop] {exc}")
+        raise SystemExit(RISK_CONTROL_EXIT_CODE) from exc

@@ -39,7 +39,10 @@ def init_crawl_task_db() -> None:
             worker_pid INTEGER,
             archived_at REAL,
             error_message TEXT,
-            exit_code INTEGER
+            exit_code INTEGER,
+            stop_requested_at REAL,
+            stop_source TEXT,
+            stop_reason TEXT
         )
         """
     )
@@ -49,9 +52,24 @@ def init_crawl_task_db() -> None:
         "archived_at": "ALTER TABLE crawl_tasks ADD COLUMN archived_at REAL",
         "error_message": "ALTER TABLE crawl_tasks ADD COLUMN error_message TEXT",
         "exit_code": "ALTER TABLE crawl_tasks ADD COLUMN exit_code INTEGER",
+        "stop_requested_at": "ALTER TABLE crawl_tasks ADD COLUMN stop_requested_at REAL",
+        "stop_source": "ALTER TABLE crawl_tasks ADD COLUMN stop_source TEXT",
+        "stop_reason": "ALTER TABLE crawl_tasks ADD COLUMN stop_reason TEXT",
     }.items():
         if col not in existing_cols:
             conn.execute(ddl)
+    # Older versions stored every interrupted task as ``failed`` with exit 130.
+    # Preserve the honest boundary: it was actively interrupted, but the old
+    # schema did not retain who requested the stop.
+    conn.execute(
+        """
+        UPDATE crawl_tasks
+        SET status = 'cancelled',
+            stop_source = COALESCE(stop_source, 'legacy_unknown'),
+            stop_reason = COALESCE(stop_reason, '历史任务被主动停止，旧版本未记录停止来源')
+        WHERE status = 'failed' AND exit_code = 130
+        """
+    )
     conn.commit()
     conn.close()
 
@@ -116,14 +134,15 @@ def claim_crawl_task(task_id: str) -> tuple[bool, str]:
         if not row:
             conn.rollback()
             return False, "task not found"
-        if row["status"] not in ("pending", "failed"):
+        if row["status"] not in ("pending", "failed", "cancelled"):
             conn.rollback()
-            return False, f"task is {row['status']}, expected pending/failed"
+            return False, f"task is {row['status']}, expected pending/failed/cancelled"
         conn.execute(
             """
             UPDATE crawl_tasks
             SET status = 'starting', started_at = ?, completed_at = NULL,
-                error_message = NULL, exit_code = NULL, worker_pid = NULL
+                error_message = NULL, exit_code = NULL, worker_pid = NULL,
+                stop_requested_at = NULL, stop_source = NULL, stop_reason = NULL
             WHERE id = ?
             """,
             (time.time(), task_id),
@@ -157,18 +176,34 @@ def set_crawl_worker_pid(task_id: str, worker_pid: int) -> None:
 
 
 def finish_crawl_task(task_id: str, exit_code: int, error: str = "") -> None:
-    status = "completed" if exit_code == 0 else "failed"
     conn = _connect()
-    conn.execute(
-        """
-        UPDATE crawl_tasks
-        SET status = ?, completed_at = ?, exit_code = ?, error_message = ?, worker_pid = NULL
-        WHERE id = ?
-        """,
-        (status, time.time(), exit_code, error or None, task_id),
-    )
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT status, stop_requested_at, stop_reason FROM crawl_tasks WHERE id = ?",
+            (task_id,),
+        ).fetchone()
+        if not row:
+            conn.rollback()
+            return
+        was_stopped = row["status"] in ("stopping", "cancelled") or row["stop_requested_at"] is not None
+        if was_stopped:
+            status = "cancelled"
+            final_error = row["stop_reason"] or "任务被主动停止"
+        else:
+            status = "completed" if exit_code == 0 else "failed"
+            final_error = error or None
+        conn.execute(
+            """
+            UPDATE crawl_tasks
+            SET status = ?, completed_at = ?, exit_code = ?, error_message = ?, worker_pid = NULL
+            WHERE id = ?
+            """,
+            (status, time.time(), exit_code, final_error, task_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def fail_crawl_task_start(task_id: str, error: str) -> None:
@@ -185,15 +220,62 @@ def fail_crawl_task_start(task_id: str, error: str) -> None:
     conn.close()
 
 
-def mark_crawl_task_cancelled(task_id: str, error: str = "cancelled by dashboard") -> None:
+def request_crawl_task_stop(
+    task_id: str,
+    source: str = "dashboard_api",
+    reason: str = "通过 Dashboard 请求停止",
+) -> tuple[bool, str]:
+    conn = _connect()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT status FROM crawl_tasks WHERE id = ?", (task_id,)).fetchone()
+        if not row:
+            conn.rollback()
+            return False, "task not found"
+        if row["status"] not in ("starting", "running"):
+            conn.rollback()
+            return False, f"task is {row['status']}, cannot stop"
+        conn.execute(
+            """
+            UPDATE crawl_tasks
+            SET status = 'stopping', stop_requested_at = ?, stop_source = ?, stop_reason = ?
+            WHERE id = ?
+            """,
+            (time.time(), source, reason, task_id),
+        )
+        conn.commit()
+        return True, ""
+    finally:
+        conn.close()
+
+
+def clear_crawl_task_stop_request(task_id: str, error: str) -> None:
+    """Restore a task when the OS refused the stop signal."""
     conn = _connect()
     conn.execute(
         """
         UPDATE crawl_tasks
-        SET status = 'failed', completed_at = ?, error_message = ?, worker_pid = NULL
-        WHERE id = ? AND status IN ('starting', 'running')
+        SET status = 'running', stop_requested_at = NULL, stop_source = NULL,
+            stop_reason = NULL, error_message = ?
+        WHERE id = ? AND status = 'stopping'
         """,
-        (time.time(), error, task_id),
+        (error, task_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def mark_crawl_task_cancelled(task_id: str) -> None:
+    """Finalize a requested stop when no worker remains to report its exit."""
+    conn = _connect()
+    conn.execute(
+        """
+        UPDATE crawl_tasks
+        SET status = 'cancelled', completed_at = ?, exit_code = COALESCE(exit_code, 130),
+            error_message = COALESCE(stop_reason, '任务被主动停止'), worker_pid = NULL
+        WHERE id = ? AND status IN ('starting', 'running', 'stopping')
+        """,
+        (time.time(), task_id),
     )
     conn.commit()
     conn.close()
@@ -207,7 +289,7 @@ def set_crawl_task_archived(task_id: str, archived: bool) -> tuple[bool, str]:
         if not row:
             conn.rollback()
             return False, "task not found"
-        if row["status"] in ("starting", "running"):
+        if row["status"] in ("starting", "running", "stopping"):
             conn.rollback()
             return False, f"task is {row['status']}, cannot archive"
         conn.execute(

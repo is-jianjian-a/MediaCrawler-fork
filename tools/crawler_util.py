@@ -85,7 +85,7 @@ async def find_qrcode_img_from_canvas(page: Page, canvas_selector: str) -> str:
     return base64_image
 
 
-def show_qrcode(qr_code) -> None:  # type: ignore
+def show_qrcode(qr_code) -> None:
     """parse base64 encode qrcode image and show it"""
     if "," in qr_code:
         qr_code = qr_code.split(",")[1]

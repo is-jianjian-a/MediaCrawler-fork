@@ -10,31 +10,76 @@ import sys
 import time
 from pathlib import Path
 
-from crawl_task_manager import (
-    fail_crawl_task_start,
-    finish_crawl_task,
-    get_crawl_task,
-    set_crawl_worker_pid,
-    start_crawl_task,
-)
+MEDIACRAWLER_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(MEDIACRAWLER_ROOT))
+
+from tools.app_runner import RISK_CONTROL_EXIT_CODE
+
+try:
+    from dashboard.crawl_task_manager import (
+        finish_crawl_task,
+        get_crawl_task,
+        set_crawl_worker_pid,
+        start_crawl_task,
+    )
+except ModuleNotFoundError:  # Support direct script execution.
+    from crawl_task_manager import (  # type: ignore[no-redef]
+        finish_crawl_task,
+        get_crawl_task,
+        set_crawl_worker_pid,
+        start_crawl_task,
+    )
+try:
+    from dashboard.rate_policy import DEFAULT_FIRST_LEVEL_COMMENTS, keyword_rate_defaults
+except ModuleNotFoundError:  # Support direct script execution.
+    from rate_policy import DEFAULT_FIRST_LEVEL_COMMENTS, keyword_rate_defaults  # type: ignore[no-redef]
+try:
+    from dashboard.risk_policy import record_completion
+except ModuleNotFoundError:
+    from risk_policy import record_completion  # type: ignore[no-redef]
 import logging
 logger = logging.getLogger("MediaCrawler")
 
 
-MEDIACRAWLER_ROOT = Path(__file__).resolve().parents[1]
 DASHBOARD_DIR = MEDIACRAWLER_ROOT / "dashboard"
 LOG_DIR = DASHBOARD_DIR / "logs"
+MAX_START_PAGE = 1000
 
 
 def _bool_text(value: bool) -> str:
     return "true" if value else "false"
 
 
+def _validated_start_page(value) -> int:
+    try:
+        start_page = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("start_page must be an integer") from exc
+    if not 1 <= start_page <= MAX_START_PAGE:
+        raise ValueError(f"start_page must be between 1 and {MAX_START_PAGE}")
+    return start_page
+
+
 def _build_command(task: dict) -> tuple[list[str], dict]:
     task_id = task.get("id") or ""
-    config = task.get("config") or {}
+    config = dict(task.get("config") or {})
+    if os.getenv("MEDIACRAWLER_RISK_CANARY", "false").lower() in ("1", "true", "yes"):
+        config.update(
+            {
+                "max_count": min(5, max(1, int(config.get("max_count", 5) or 5))),
+                "get_comments": False,
+                "get_sub_comments": False,
+                "max_concurrency": 1,
+                "min_sleep": 240,
+                "max_sleep": 300,
+                "pre_search_delay": 75,
+            }
+        )
     keywords = task.get("keywords") or []
     stop_condition = str(config.get("stop_condition", "new_count") or "new_count")
+    get_comments = bool(config.get("get_comments"))
+    start_page = _validated_start_page(config.get("start_page", 1))
+    rate_defaults = keyword_rate_defaults(get_comments)
     search_max_items = max(0, int(config.get("max_count", 0 if stop_condition == "date_floor" else 100) or 0))
     crawler_max_count = 1_000_000 if stop_condition == "date_floor" else max(1, search_max_items)
     uv = shutil.which("uv")
@@ -51,11 +96,11 @@ def _build_command(task: dict) -> tuple[list[str], dict]:
         "--max_count",
         str(crawler_max_count),
         "--get_comment",
-        "yes" if config.get("get_comments") else "no",
+        "yes" if get_comments else "no",
         "--get_sub_comment",
         "yes" if config.get("get_sub_comments") else "no",
         "--max_comments_count_singlenotes",
-        str(config.get("max_comments", 10)),
+        str(config.get("max_comments", DEFAULT_FIRST_LEVEL_COMMENTS)),
         "--max_sub_comments_count_singlenotes",
         str(config.get("max_sub_comments", 10)),
         "--max_concurrency_num",
@@ -69,10 +114,13 @@ def _build_command(task: dict) -> tuple[list[str], dict]:
         {
             "MEDIACRAWLER_KEYWORDS": ",".join(keywords),
             "MEDIACRAWLER_TASK_ID": task_id,
+            "MEDIACRAWLER_START_PAGE": str(start_page),
             "MEDIACRAWLER_CRAWLER_MAX_NOTES_COUNT": str(crawler_max_count),
-            "MEDIACRAWLER_ENABLE_GET_COMMENTS": _bool_text(bool(config.get("get_comments"))),
+            "MEDIACRAWLER_ENABLE_GET_COMMENTS": _bool_text(get_comments),
             "MEDIACRAWLER_ENABLE_GET_SUB_COMMENTS": _bool_text(bool(config.get("get_sub_comments"))),
-            "MEDIACRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES": str(config.get("max_comments", 10)),
+            "MEDIACRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES": str(
+                config.get("max_comments", DEFAULT_FIRST_LEVEL_COMMENTS)
+            ),
             "MEDIACRAWLER_MAX_SUB_COMMENTS_COUNT_SINGLENOTES": str(config.get("max_sub_comments", 10)),
             "MEDIACRAWLER_MAX_CONCURRENCY_NUM": str(config.get("max_concurrency", 1)),
             "MEDIACRAWLER_XHS_SORT_TYPE": str(config.get("sort_type", "time_descending")),
@@ -82,14 +130,24 @@ def _build_command(task: dict) -> tuple[list[str], dict]:
             "MEDIACRAWLER_XHS_SEARCH_MAX_ITEMS": str(search_max_items),
             "MEDIACRAWLER_SMART_CRAWLER_COUNT_MODE": str(config.get("count_mode", "incremental")),
             "MEDIACRAWLER_ENABLE_RANDOM_SLEEP": _bool_text(bool(config.get("enable_random_sleep", True))),
-            "MEDIACRAWLER_CRAWLER_MIN_SLEEP_SEC": str(config.get("min_sleep", 20)),
-            "MEDIACRAWLER_CRAWLER_MAX_SLEEP_SEC": str(config.get("max_sleep", 40)),
-            "MEDIACRAWLER_CRAWLER_COMMENT_SLEEP_SEC": str(config.get("comment_sleep", 5)),
+            "MEDIACRAWLER_CRAWLER_MIN_SLEEP_SEC": str(
+                config.get("min_sleep", rate_defaults["min_sleep"])
+            ),
+            "MEDIACRAWLER_CRAWLER_MAX_SLEEP_SEC": str(
+                config.get("max_sleep", rate_defaults["max_sleep"])
+            ),
+            "MEDIACRAWLER_CRAWLER_COMMENT_SLEEP_SEC": str(
+                config.get("comment_sleep", rate_defaults["comment_sleep"])
+            ),
             "MEDIACRAWLER_XHS_NOTE_DETAIL_TIMEOUT_SEC": str(config.get("note_detail_timeout", 75)),
+            "MEDIACRAWLER_XHS_PRE_SEARCH_DELAY_SEC": str(config.get("pre_search_delay", 75)),
             "MEDIACRAWLER_USER_DATA_DIR": str(config.get("user_data_dir", "%s_user_data_dir_account02")),
             "MEDIACRAWLER_ENABLE_CDP": _bool_text(bool(config.get("enable_cdp"))),
             "MEDIACRAWLER_REQUIRE_CDP": _bool_text(bool(config.get("require_cdp"))),
-            "MEDIACRAWLER_CDP_DEBUG_PORT": str(config.get("cdp_debug_port", 9222)),
+            "MEDIACRAWLER_CDP_DEBUG_PORT": os.getenv(
+                "MEDIACRAWLER_TASK_CDP_DEBUG_PORT",
+                str(config.get("cdp_debug_port", 9222)),
+            ),
             "MEDIACRAWLER_AUTO_CLOSE_BROWSER": "false",
             "MEDIACRAWLER_CDP_CONNECT_EXISTING": "true",
         }
@@ -117,6 +175,7 @@ def run_task(task_id: str) -> int:
             log.write(f"[{started_at}] Dashboard crawl task started: {task_id}\n")
             log.write("Command: " + " ".join(command) + "\n")
             log.write("Keywords: " + ",".join(task.get("keywords") or []) + "\n")
+            log.write(f"Start page: {env['MEDIACRAWLER_START_PAGE']}\n")
             log.write("Config: " + repr(config) + "\n\n")
             log.flush()
             if config.get("dry_run"):
@@ -136,14 +195,33 @@ def run_task(task_id: str) -> int:
             exit_code = process.wait()
             ended_at = time.strftime("%Y-%m-%d %H:%M:%S")
             log.write(f"\n[{ended_at}] crawler exited with code {exit_code}\n")
+            if exit_code == RISK_CONTROL_EXIT_CODE:
+                error = "XHS risk control CAPTCHA (HTTP 461/471); task stopped immediately"
+            else:
+                error = "" if exit_code == 0 else f"crawler exited with code {exit_code}"
             finish_crawl_task(
                 task_id,
                 exit_code,
-                "" if exit_code == 0 else f"crawler exited with code {exit_code}",
+                error,
+            )
+            record_completion(
+                task_id=task_id,
+                task_kind="search",
+                user_data_dir=str(config.get("user_data_dir", "")),
+                exit_code=exit_code,
             )
             return exit_code
     except Exception as exc:
-        fail_crawl_task_start(task_id, str(exc))
+        # The task has already transitioned to running above.  Record a terminal
+        # failure instead of using the starting-only failure path and leaving a
+        # stale running task behind.
+        finish_crawl_task(task_id, 1, str(exc))
+        record_completion(
+            task_id=task_id,
+            task_kind="search",
+            user_data_dir=str((task.get("config") or {}).get("user_data_dir", "")),
+            exit_code=1,
+        )
         try:
             with log_path.open("a", encoding="utf-8", errors="replace") as log:
                 log.write(f"\n[error] {exc}\n")

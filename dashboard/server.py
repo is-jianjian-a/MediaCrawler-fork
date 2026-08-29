@@ -30,7 +30,45 @@ from db import (
 from groups import list_groups, save_group, activate_group, delete_group, rename_group, copy_group
 from task_manager import init_task_db
 from crawl_task_manager import init_crawl_task_db
+try:
+    from dashboard.risk_policy import (
+        abort_launch,
+        confirm_launch,
+        get_status as get_risk_policy_status,
+        init_risk_policy_db,
+        reserve_launch,
+    )
+except ModuleNotFoundError:  # Support `python dashboard/server.py`.
+    from risk_policy import (  # type: ignore[no-redef]
+        abort_launch,
+        confirm_launch,
+        get_status as get_risk_policy_status,
+        init_risk_policy_db,
+        reserve_launch,
+    )
 from worth_scoring import score_post
+from comment_fetcher import (
+    DEFAULT_COMMENT_PUBLISH_DATE_AFTER,
+    validate_comment_publish_date_after,
+    validate_standard_browser_path,
+)
+
+try:
+    from dashboard.rate_policy import (
+        COMMENTS_RATE,
+        DEFAULT_COMMENT_TASK_BATCH_DELAY,
+        DEFAULT_COMMENT_TASK_BATCH_SIZE,
+        DEFAULT_FIRST_LEVEL_COMMENTS,
+        keyword_rate_defaults,
+    )
+except ModuleNotFoundError:  # Support `python dashboard/server.py`.
+    from rate_policy import (  # type: ignore[no-redef]
+        COMMENTS_RATE,
+        DEFAULT_COMMENT_TASK_BATCH_DELAY,
+        DEFAULT_COMMENT_TASK_BATCH_SIZE,
+        DEFAULT_FIRST_LEVEL_COMMENTS,
+        keyword_rate_defaults,
+    )
 
 # --- config ---
 PORT = 18998
@@ -43,6 +81,8 @@ DASHBOARD_DB = os.path.join(DASHBOARD_DIR, "database", "dashboard.db")
 STATIC_DIR = os.path.join(DASHBOARD_DIR, "static")
 
 SNAPSHOT_INTERVAL = 30
+RISK_SCHEDULER_INTERVAL = int(os.getenv("MEDIACRAWLER_RISK_SCHEDULER_INTERVAL", "30"))
+RISK_SCHEDULER_ENABLED = os.getenv("MEDIACRAWLER_RISK_SCHEDULER_ENABLED", "true").lower() in ("1", "true", "yes")
 MAX_DB_SIZE_MB = 100
 MAX_HISTORY_HOURS = 72
 MIN_COMMENT_TASK_BATCH_SIZE = int(os.getenv("MEDIACRAWLER_MIN_COMMENT_TASK_BATCH_SIZE", "5"))
@@ -53,6 +93,7 @@ logger = logging.getLogger("dashboard")
 app = Flask(__name__, static_folder=STATIC_DIR, static_url_path="/static")
 init_task_db()
 init_crawl_task_db()
+init_risk_policy_db()
 
 
 def _cdp_debug_port() -> int:
@@ -125,9 +166,22 @@ def _find_available_cdp_port(start_port: int, max_attempts: int = 20) -> int:
 
 def _chrome_binary_path() -> str:
     configured = os.getenv("MEDIACRAWLER_BROWSER_PATH", "")
+    playwright_chromium = ""
+    try:
+        # Prefer Playwright's isolated Chromium.  The crawler must not launch the
+        # user's daily Chrome just because no explicit browser path was supplied.
+        from playwright.sync_api import sync_playwright
+
+        with sync_playwright() as playwright:
+            candidate = playwright.chromium.executable_path
+            if candidate and os.path.exists(candidate):
+                playwright_chromium = candidate
+    except Exception as exc:
+        logger.warning("Unable to locate Playwright Chromium: %s", exc)
     candidates = [
         configured,
-        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        playwright_chromium,
+        "/Applications/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
         "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
         shutil.which("google-chrome") or "",
         shutil.which("chromium") or "",
@@ -135,7 +189,10 @@ def _chrome_binary_path() -> str:
     for candidate in candidates:
         if candidate and os.path.exists(candidate):
             return candidate
-    raise RuntimeError("Chrome binary not found. Set MEDIACRAWLER_BROWSER_PATH.")
+    raise RuntimeError(
+        "Isolated Chromium/Chrome for Testing not found. Set MEDIACRAWLER_BROWSER_PATH "
+        "to a crawler-only browser; the user's daily Chrome will not be launched automatically."
+    )
 
 
 def check_cdp_remote_debugging(timeout: float = 2.0, port: int = None, verify_playwright: bool = False):
@@ -199,8 +256,8 @@ def check_cdp_remote_debugging(timeout: float = 2.0, port: int = None, verify_pl
     return result
 
 
-def start_cdp_chrome():
-    start_port = _cdp_debug_port()
+def start_cdp_chrome(preferred_port: int = None):
+    start_port = preferred_port or _cdp_debug_port()
     existing = check_cdp_remote_debugging(port=start_port, verify_playwright=True)
     if existing.get("ok"):
         return {**existing, "started": False, "message": "CDP already available"}
@@ -217,7 +274,7 @@ def start_cdp_chrome():
     command = [
         chrome,
         f"--remote-debugging-port={port}",
-        "--remote-debugging-address=0.0.0.0",
+        "--remote-debugging-address=127.0.0.1",
         "--no-first-run",
         "--no-default-browser-check",
         "--disable-background-timer-throttling",
@@ -229,11 +286,9 @@ def start_cdp_chrome():
         "--disable-prompt-on-repost",
         "--disable-sync",
         "--disable-dev-shm-usage",
-        "--no-sandbox",
         "--disable-blink-features=AutomationControlled",
         "--exclude-switches=enable-automation",
         "--disable-infobars",
-        "--start-maximized",
         f"--user-data-dir={user_data_dir}",
         "https://www.xiaohongshu.com",
     ]
@@ -286,6 +341,16 @@ def ensure_crawler_db_indexes():
         return
     try:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_xhs_note_comment_note_id ON xhs_note_comment(note_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_xhs_note_source_keyword ON xhs_note(source_keyword)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_xhs_note_add_ts ON xhs_note(add_ts)")
+        has_keyword_hits = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='xhs_note_keyword_hit'"
+        ).fetchone()
+        if has_keyword_hits:
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_xhs_note_keyword_hit_keyword_note "
+                "ON xhs_note_keyword_hit(keyword, note_id)"
+            )
         conn.commit()
     finally:
         conn.close()
@@ -364,7 +429,7 @@ def get_crawl_task_health():
             "recent_task": None,
         }
 
-    active = next((t for t in tasks if t.get("status") in ("starting", "running")), None)
+    active = next((t for t in tasks if t.get("status") in ("starting", "running", "stopping")), None)
     recent = tasks[0] if tasks else None
     task = active or recent
     if not task:
@@ -380,32 +445,16 @@ def get_crawl_task_health():
     if active:
         return {
             "status": status,
-            "label": "运行中" if status == "running" else "启动中",
+            "label": {"running": "运行中", "starting": "启动中", "stopping": "停止中"}.get(status, status),
             "color": "ok" if status == "running" else "warning",
             "active_task": active,
             "recent_task": recent,
         }
-    if status == "completed":
+    if status in ("completed", "failed", "pending", "cancelled"):
         return {
-            "status": "completed",
-            "label": "任务已完成",
+            "status": "idle",
+            "label": "当前无运行任务",
             "color": "ok",
-            "active_task": None,
-            "recent_task": recent,
-        }
-    if status == "failed":
-        return {
-            "status": "failed",
-            "label": "任务失败",
-            "color": "error",
-            "active_task": None,
-            "recent_task": recent,
-        }
-    if status == "pending":
-        return {
-            "status": "pending",
-            "label": "待启动",
-            "color": "warning",
             "active_task": None,
             "recent_task": recent,
         }
@@ -543,8 +592,8 @@ def api_stats():
             verdict, vcolor = f"运行停滞（{last_write_gap/60:.0f}分钟无写入）", "error"
         elif last_write_gap is not None and last_write_gap >= 600:
             verdict, vcolor = f"运行中（{last_write_gap/60:.0f}分钟无写入）", "warning"
-    elif recent_task and recent_task.get("status") == "completed":
-        verdict, vcolor = "任务已完成", "ok"
+    elif recent_task:
+        verdict, vcolor = "当前无运行任务", "ok"
 
     # Build keyword table rows (merged from /api/keywords)
     details = stats.get("keyword_details", {})
@@ -577,6 +626,194 @@ def api_stats():
         "db_size_mb": round(db_size, 1),
         "db_size_warning": db_size > MAX_DB_SIZE_MB,
     })
+
+
+def _asset_scope_rows(conn, keywords):
+    """Return one canonical note row plus every selected keyword hit.
+
+    `source_keyword` is retained for legacy notes while
+    `xhs_note_keyword_hit` records newer multi-keyword provenance.  The union is
+    the Dashboard's dataset boundary, so a note is counted once even when it
+    was found by several selected keywords.
+    """
+    if not keywords:
+        return [], {}
+    ph = _kw_placeholders(keywords)
+    cur = conn.cursor()
+    has_keyword_hits = cur.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='xhs_note_keyword_hit'"
+    ).fetchone()
+    hit_union = (
+        f"UNION SELECT note_id, keyword FROM xhs_note_keyword_hit WHERE keyword IN ({ph})"
+        if has_keyword_hits else ""
+    )
+    params = keywords + keywords if has_keyword_hits else keywords
+    scope_cte = f"""
+        WITH scoped_hits AS (
+            SELECT note_id, source_keyword AS keyword
+            FROM xhs_note
+            WHERE source_keyword IN ({ph}) AND TRIM(source_keyword) <> ''
+            {hit_union}
+        ),
+        scoped_ids AS (
+            SELECT note_id, COUNT(DISTINCT keyword) AS matched_keyword_count
+            FROM scoped_hits GROUP BY note_id
+        ),
+        comment_counts AS (
+            SELECT c.note_id, COUNT(*) AS db_comment_count
+            FROM xhs_note_comment c
+            JOIN scoped_ids s ON s.note_id = c.note_id
+            GROUP BY c.note_id
+        )
+    """
+    cur.execute(
+        scope_cte + """
+        SELECT n.note_id, n.title, n.desc, n.source_keyword,
+               COALESCE(n.liked_count, 0), COALESCE(n.collected_count, 0),
+               COALESCE(n.comment_count, 0), COALESCE(n.add_ts, 0),
+               COALESCE(n.time, 0), COALESCE(c.db_comment_count, 0),
+               s.matched_keyword_count
+        FROM scoped_ids s
+        JOIN xhs_note n ON n.note_id = s.note_id
+        LEFT JOIN comment_counts c ON c.note_id = n.note_id
+        """,
+        params,
+    )
+    rows = cur.fetchall()
+    cur.execute(
+        f"""
+        WITH scoped_hits AS (
+            SELECT note_id, source_keyword AS keyword
+            FROM xhs_note
+            WHERE source_keyword IN ({ph}) AND TRIM(source_keyword) <> ''
+            {hit_union}
+        )
+        SELECT note_id, keyword FROM scoped_hits
+        """,
+        params,
+    )
+    note_keywords = {}
+    for row in cur.fetchall():
+        note_keywords.setdefault(row[0], []).append(row[1])
+    return rows, note_keywords
+
+
+@app.route("/api/asset-summary")
+def api_asset_summary():
+    """Analysis-readiness and collection-gap summary for the active group."""
+    keywords, _ = get_config_values()
+    conn = _with_crawler_db()
+    if not conn:
+        return jsonify({"error": "no DB connection"}), 503
+    try:
+        rows, note_keywords = _asset_scope_rows(conn, keywords)
+        total_posts = len(rows)
+        total_comments = sum(int(row[9] or 0) for row in rows)
+        posts_with_comments = sum(1 for row in rows if int(row[9] or 0) > 0)
+        empty_desc = sum(1 for row in rows if not str(row[2] or "").strip())
+        text_empty = sum(
+            1 for row in rows
+            if not (str(row[1] or "").strip() or str(row[2] or "").strip())
+        )
+        analysis_ready = 0
+        comment_gap_candidates = 0
+        scored = []
+        for row in rows:
+            note_id = row[0]
+            title = str(row[1] or "")
+            desc = str(row[2] or "")
+            liked = int(row[4] or 0)
+            collected = int(row[5] or 0)
+            platform_comments = int(row[6] or 0)
+            db_comments = int(row[9] or 0)
+            has_text = bool(title.strip() or desc.strip())
+            if has_text and (db_comments > 0 or platform_comments > 0 or liked + collected >= 10):
+                analysis_ready += 1
+            if platform_comments >= 10 and db_comments < min(platform_comments, 10):
+                comment_gap_candidates += 1
+            post = {
+                "note_id": note_id,
+                "title": title,
+                "source_keyword": row[3] or "",
+                "liked_count": liked,
+                "comment_count": platform_comments,
+                "db_comment_count": db_comments,
+                "desc_length": len(desc),
+            }
+            post.update(score_post(post))
+            scored.append({
+                **post,
+                "keywords": note_keywords.get(note_id, []),
+                "add_ts": int(row[7] or 0),
+            })
+
+        scored.sort(
+            key=lambda item: (
+                item.get("worth_score", 0),
+                item.get("comment_gap", 0),
+                item.get("liked_count", 0),
+            ),
+            reverse=True,
+        )
+        high_value_count = sum(1 for item in scored if item.get("worth_score", 0) >= 60)
+        multi_keyword_posts = sum(1 for row in rows if int(row[10] or 0) >= 2)
+        publish_times = [int(row[8] or 0) for row in rows if int(row[8] or 0) > 0]
+        latest_row = max(rows, key=lambda row: int(row[7] or 0), default=None)
+
+        by_note = {row[0]: row for row in rows}
+        coverage = []
+        for keyword in keywords:
+            note_ids = [note_id for note_id, hits in note_keywords.items() if keyword in hits]
+            keyword_rows = [by_note[note_id] for note_id in note_ids if note_id in by_note]
+            with_comments = sum(1 for row in keyword_rows if int(row[9] or 0) > 0)
+            gap_count = sum(
+                1 for row in keyword_rows
+                if int(row[6] or 0) >= 10 and int(row[9] or 0) < min(int(row[6] or 0), 10)
+            )
+            post_count = len(keyword_rows)
+            if post_count < 10:
+                status = "样本偏少"
+            elif gap_count:
+                status = "值得补评"
+            elif with_comments / max(1, post_count) >= 0.4:
+                status = "可分析"
+            else:
+                status = "评论偏少"
+            coverage.append({
+                "keyword": keyword,
+                "post_count": post_count,
+                "db_comment_count": sum(int(row[9] or 0) for row in keyword_rows),
+                "posts_with_comments": with_comments,
+                "comment_coverage_pct": round(with_comments / max(1, post_count) * 100),
+                "comment_gap_candidates": gap_count,
+                "latest_add_ts": max((int(row[7] or 0) for row in keyword_rows), default=0),
+                "status": status,
+            })
+
+        return jsonify({
+            "keywords": keywords,
+            "total_posts": total_posts,
+            "total_comments": total_comments,
+            "analysis_ready_posts": analysis_ready,
+            "analysis_ready_pct": round(analysis_ready / max(1, total_posts) * 100),
+            "posts_with_comments": posts_with_comments,
+            "comment_coverage_pct": round(posts_with_comments / max(1, total_posts) * 100),
+            "zero_comment_posts": total_posts - posts_with_comments,
+            "comment_gap_candidates": comment_gap_candidates,
+            "high_value_posts": high_value_count,
+            "multi_keyword_posts": multi_keyword_posts,
+            "empty_desc_count": empty_desc,
+            "empty_desc_pct": round(empty_desc / max(1, total_posts) * 100, 1),
+            "text_empty_count": text_empty,
+            "publish_date_min": min(publish_times, default=0),
+            "publish_date_max": max(publish_times, default=0),
+            "latest_ingest_ts": int(latest_row[7] or 0) if latest_row else 0,
+            "latest_ingest_keyword": (latest_row[3] or "") if latest_row else "",
+            "keyword_coverage": coverage,
+            "top_opportunities": scored[:8],
+        })
+    finally:
+        conn.close()
 
 
 @app.route("/api/history")
@@ -883,6 +1120,7 @@ def api_create_task():
     name = data.get("name", "")
     posts = data.get("posts", [])
     config = data.get("config", {})
+    group_tag = (data.get("group_tag") or "").strip()[:40]
     if not name or not isinstance(posts, list) or not posts:
         return jsonify({"error": "name and posts required"}), 400
     unique_posts = []
@@ -896,60 +1134,107 @@ def api_create_task():
     posts = unique_posts
     if not posts:
         return jsonify({"error": "posts must contain note_id"}), 400
-    if len(posts) > 100:
-        return jsonify({"error": "a task may contain at most 100 posts"}), 400
+    if len(posts) > 2:
+        return jsonify({"error": "risk policy allows at most 2 posts per comment task"}), 400
     try:
-        browser_mode = str(config.get("browser_mode", "cdp_optional") or "cdp_optional")
+        browser_mode = str(config.get("browser_mode", "standard") or "standard")
         if browser_mode not in ("standard", "cdp_optional", "cdp_required"):
-            browser_mode = "cdp_optional"
+            browser_mode = "standard"
         user_data_dir = str(config.get("user_data_dir", "%s_user_data_dir_account02") or "%s_user_data_dir_account02").strip()
         if not user_data_dir:
             user_data_dir = "%s_user_data_dir_account02"
+        min_sleep = max(0, min(int(config.get("min_sleep", COMMENTS_RATE.min_sleep)), 300))
+        max_sleep = max(0, min(int(config.get("max_sleep", COMMENTS_RATE.max_sleep)), 600))
+        if max_sleep < min_sleep:
+            raise ValueError("max_sleep must not be lower than min_sleep")
         config = {
-            "batch_size": max(1, min(int(config.get("batch_size", 5)), 20)),
-            "max_comments": max(1, min(int(config.get("max_comments", 200)), 500)),
+            "batch_size": max(1, min(int(config.get("batch_size", DEFAULT_COMMENT_TASK_BATCH_SIZE)), 20)),
+            "max_comments": max(1, min(int(config.get("max_comments", DEFAULT_FIRST_LEVEL_COMMENTS)), 5)),
             "max_sub_comments": max(0, min(int(config.get("max_sub_comments", 200)), 1000)),
             "get_sub_comments": config.get("get_sub_comments", False) is True,
-            "delay": max(0, min(float(config.get("delay", 5)), 120)),
+            "delay": max(0, min(float(config.get("delay", DEFAULT_COMMENT_TASK_BATCH_DELAY)), 120)),
+            "min_sleep": min_sleep,
+            "max_sleep": max_sleep,
+            "comment_sleep": max(90, min(int(config.get("comment_sleep", COMMENTS_RATE.comment_sleep)), 120)),
+            "max_concurrency": 1,
             "limit": max(0, min(int(config.get("limit", 0) or 0), 100)),
             "dry_run": config.get("dry_run", False) is True,
+            "headless": True,
             "user_data_dir": user_data_dir,
             "browser_mode": browser_mode,
-            "enable_cdp": config.get("enable_cdp", False) is True or browser_mode in ("cdp_optional", "cdp_required"),
-            "require_cdp": config.get("require_cdp", False) is True or browser_mode == "cdp_required",
+            "enable_cdp": False,
+            "require_cdp": False,
             "cdp_debug_port": max(1, min(int(config.get("cdp_debug_port", 9222) or 9222), 65535)),
+            "browser_path": str(config.get("browser_path", "") or "").strip(),
+            "publish_date_after": validate_comment_publish_date_after(
+                config.get("publish_date_after", DEFAULT_COMMENT_PUBLISH_DATE_AFTER)
+            ),
             "start_mode": "auto" if config.get("start_mode") == "auto" else "manual",
         }
     except (TypeError, ValueError):
         return jsonify({"error": "invalid task config"}), 400
-    task_id = create_task(name, posts, config)
+    task_id = create_task(name, posts, config, group_tag=group_tag)
     return jsonify({"id": task_id, "ok": True})
 
 
 def _launch_comment_task(task_id, retry_failed=False):
     from task_manager import claim_task, fail_task_start, get_task, set_task_worker_pid
 
-    claimed, error = claim_task(task_id, retry_failed=retry_failed)
-    if not claimed:
-        status = 404 if error == "task not found" else 409
-        return jsonify({"error": error}), status
-
     task = get_task(task_id)
+    if not task:
+        return jsonify({"error": "task not found"}), 404
     try:
         task_config = json.loads(task.get("config_json") or "{}")
     except (TypeError, json.JSONDecodeError):
         task_config = {}
-    effective_batch_size = max(1, min(int(task_config.get("batch_size", 5) or 5), 20))
+    dry_run = bool(task_config.get("dry_run"))
+    if not dry_run:
+        decision = reserve_launch(
+            task_id=task_id,
+            task_kind="comment",
+            config=task_config,
+            total_posts=int(task.get("total_posts", 0) or 0),
+        )
+        if not decision.allowed:
+            return jsonify({"error": decision.reason, "risk_policy": decision.as_dict()}), 429
+
+    claimed, error = claim_task(task_id, retry_failed=retry_failed)
+    if not claimed:
+        if not dry_run:
+            abort_launch(task_id, task_config.get("user_data_dir", ""), error)
+        status = 404 if error == "task not found" else 409
+        return jsonify({"error": error}), status
+    effective_batch_size = max(
+        1,
+        min(
+            int(task_config.get("batch_size", DEFAULT_COMMENT_TASK_BATCH_SIZE) or DEFAULT_COMMENT_TASK_BATCH_SIZE),
+            20,
+        ),
+    )
+    try:
+        publish_date_after = validate_comment_publish_date_after(
+            task_config.get("publish_date_after", DEFAULT_COMMENT_PUBLISH_DATE_AFTER)
+        )
+    except ValueError as exc:
+        fail_task_start(task_id, str(exc))
+        if not dry_run:
+            abort_launch(task_id, task_config.get("user_data_dir", ""), str(exc))
+        return jsonify({"error": f"failed to start worker: {exc}"}), 500
 
     uv = shutil.which("uv")
     command = ([uv, "run", "python"] if uv else [sys.executable]) + [
         os.path.join(DASHBOARD_DIR, "comment_fetcher.py"),
         "--task-id", task_id,
         "--batch-size", str(effective_batch_size),
-        "--max-comments", str(task_config.get("max_comments", 200)),
+        "--max-comments", str(task_config.get("max_comments", DEFAULT_FIRST_LEVEL_COMMENTS)),
         "--max-sub-comments", str(task_config.get("max_sub_comments", 200)),
-        "--delay", str(task_config.get("delay", 5)),
+        "--delay", str(task_config.get("delay", DEFAULT_COMMENT_TASK_BATCH_DELAY)),
+        "--min-sleep", str(task_config.get("min_sleep", COMMENTS_RATE.min_sleep)),
+        "--max-sleep", str(task_config.get("max_sleep", COMMENTS_RATE.max_sleep)),
+        "--comment-sleep", str(task_config.get("comment_sleep", COMMENTS_RATE.comment_sleep)),
+        "--max-concurrency", "1",
         "--user-data-dir", str(task_config.get("user_data_dir", "%s_user_data_dir_account02")),
+        "--publish-date-after", publish_date_after,
     ]
     if int(task_config.get("limit", 0) or 0) > 0:
         command.extend(["--limit", str(task_config.get("limit"))])
@@ -964,6 +1249,16 @@ def _launch_comment_task(task_id, retry_failed=False):
         worker_env = os.environ.copy()
         enable_cdp = bool(task_config.get("enable_cdp"))
         require_cdp = bool(task_config.get("require_cdp"))
+        if enable_cdp or require_cdp:
+            raise ValueError(
+                "comment tasks require standard isolated browser mode; CDP is disabled"
+            )
+        if not enable_cdp:
+            browser_path = validate_standard_browser_path(
+                task_config.get("browser_path", "")
+            )
+            command.extend(["--browser-path", browser_path])
+            worker_env["MEDIACRAWLER_BROWSER_PATH"] = browser_path
         if enable_cdp:
             cdp_status = start_cdp_chrome()
             if not cdp_status.get("ok") and require_cdp:
@@ -973,7 +1268,9 @@ def _launch_comment_task(task_id, retry_failed=False):
         worker_env["MEDIACRAWLER_REQUIRE_CDP"] = "true" if require_cdp else "false"
         worker_env["MEDIACRAWLER_CDP_DEBUG_PORT"] = str(task_config.get("cdp_debug_port", 9222))
         worker_env["MEDIACRAWLER_AUTO_CLOSE_BROWSER"] = "false"
-        worker_env["MEDIACRAWLER_CDP_CONNECT_EXISTING"] = "true"
+        worker_env["MEDIACRAWLER_CDP_CONNECT_EXISTING"] = "false"
+        worker_env.pop("MEDIACRAWLER_CDP_ENDPOINT", None)
+        worker_env["MEDIACRAWLER_XHS_NOTE_PUBLISH_DATE_AFTER"] = publish_date_after
         worker = subprocess.Popen(
             command,
             cwd=MEDIACRAWLER_ROOT,
@@ -983,8 +1280,12 @@ def _launch_comment_task(task_id, retry_failed=False):
             start_new_session=True,
         )
         set_task_worker_pid(task_id, worker.pid)
+        if not dry_run:
+            confirm_launch(task_id, task_config.get("user_data_dir", ""))
     except Exception as exc:
         fail_task_start(task_id, str(exc))
+        if not dry_run:
+            abort_launch(task_id, task_config.get("user_data_dir", ""), str(exc))
         return jsonify({"error": f"failed to start worker: {exc}"}), 500
     return jsonify({"ok": True, "pid": worker.pid, "status": "starting"}), 202
 
@@ -1180,7 +1481,7 @@ def _normalize_crawl_keywords(raw_keywords):
 
 def _normalize_crawl_config(config):
     config = config or {}
-    browser_mode = str(config.get("browser_mode", "cdp_optional") or "cdp_optional")
+    browser_mode = str(config.get("browser_mode", "standard") or "standard")
     if browser_mode not in ("standard", "cdp_optional", "cdp_required"):
         browser_mode = "cdp_optional"
     note_type = str(config.get("note_type", "all") or "all")
@@ -1198,30 +1499,40 @@ def _normalize_crawl_config(config):
     user_data_dir = str(config.get("user_data_dir", "%s_user_data_dir_account02") or "").strip() or "%s_user_data_dir_account02"
     publish_date_after = str(config.get("publish_date_after", "2026-06-10") or "").strip()
     default_max_count = 0 if stop_condition == "date_floor" else 100
+    get_comments = config.get("get_comments", False) is True
+    rate_defaults = keyword_rate_defaults(get_comments)
+    start_page = int(config.get("start_page", 1))
+    if not 1 <= start_page <= 1000:
+        raise ValueError("start_page must be between 1 and 1000")
+    min_sleep = max(0, min(int(config.get("min_sleep", rate_defaults["min_sleep"])), 300))
+    max_sleep = max(0, min(int(config.get("max_sleep", rate_defaults["max_sleep"])), 600))
+    if max_sleep < min_sleep:
+        raise ValueError("max_sleep must not be lower than min_sleep")
     return {
         "topic": str(config.get("topic", "fluency_lag") or "fluency_lag"),
+        "start_page": start_page,
         "stop_condition": stop_condition,
         "publish_date_after": publish_date_after,
         "max_count": max(0, min(int(config.get("max_count", default_max_count)), 200000)),
         "count_mode": count_mode,
         "sort_type": sort_type,
         "note_type": note_type,
-        "get_comments": config.get("get_comments", False) is True,
-        "get_sub_comments": config.get("get_sub_comments", False) is True,
-        "max_comments": max(0, min(int(config.get("max_comments", 10)), 500)),
+        "get_comments": get_comments,
+        "get_sub_comments": get_comments and config.get("get_sub_comments", False) is True,
+        "max_comments": max(0, min(int(config.get("max_comments", DEFAULT_FIRST_LEVEL_COMMENTS)), 500)),
         "max_sub_comments": max(0, min(int(config.get("max_sub_comments", 10)), 1000)),
         "max_concurrency": max(1, min(int(config.get("max_concurrency", 1)), 5)),
         "enable_random_sleep": config.get("enable_random_sleep", True) is True,
-        "min_sleep": max(0, min(int(config.get("min_sleep", 20)), 300)),
-        "max_sleep": max(0, min(int(config.get("max_sleep", 40)), 600)),
-        "comment_sleep": max(1, min(int(config.get("comment_sleep", 5)), 120)),
+        "min_sleep": min_sleep,
+        "max_sleep": max_sleep,
+        "comment_sleep": max(1, min(int(config.get("comment_sleep", rate_defaults["comment_sleep"])), 120)),
         "note_detail_timeout": max(10, min(int(config.get("note_detail_timeout", 75)), 300)),
-        "headless": config.get("headless", False) is True,
+        "headless": config.get("headless", True) is not False,
         "dry_run": config.get("dry_run", False) is True,
         "user_data_dir": user_data_dir,
         "browser_mode": browser_mode,
-        "enable_cdp": config.get("enable_cdp", False) is True or browser_mode in ("cdp_optional", "cdp_required"),
-        "require_cdp": config.get("require_cdp", False) is True or browser_mode == "cdp_required",
+        "enable_cdp": False,
+        "require_cdp": False,
         "cdp_debug_port": max(1, min(int(config.get("cdp_debug_port", 9222) or 9222), 65535)),
         "browser_path": str(config.get("browser_path", "") or "").strip(),
         "start_mode": "auto" if config.get("start_mode") == "auto" else "manual",
@@ -1291,7 +1602,12 @@ def _parse_crawl_log(lines: list[str]) -> dict:
     return info
 
 
-def _crawl_keyword_stats(conn: sqlite3.Connection, keywords: list[str]) -> list[dict]:
+def _crawl_keyword_stats(
+    conn: sqlite3.Connection,
+    keywords: list[str],
+    task_id: str = "",
+    started_at: float = 0,
+) -> list[dict]:
     if not keywords:
         return []
     ph = _kw_placeholders(keywords)
@@ -1299,6 +1615,8 @@ def _crawl_keyword_stats(conn: sqlite3.Connection, keywords: list[str]) -> list[
         kw: {
             "keyword": kw,
             "post_count": 0,
+            "persisted_post_count": 0,
+            "new_post_count": 0,
             "db_comment_count": 0,
             "platform_comment_count": 0,
             "last_note_ts": 0,
@@ -1310,35 +1628,71 @@ def _crawl_keyword_stats(conn: sqlite3.Connection, keywords: list[str]) -> list[
     }
 
     cur = conn.cursor()
-    cur.execute(
-        f"""
-        SELECT source_keyword, COUNT(*), COALESCE(SUM(comment_count), 0), COALESCE(MAX(add_ts), 0)
-        FROM xhs_note
-        WHERE source_keyword IN ({ph})
-        GROUP BY source_keyword
-        """,
-        keywords,
-    )
-    for kw, post_count, platform_comments, last_note_ts in cur.fetchall():
+    if task_id:
+        started_ms = int(started_at * 1000) if started_at else 0
+        cur.execute(
+            f"""
+            SELECT h.keyword, COUNT(DISTINCT h.note_id),
+                   COUNT(DISTINCT n.note_id),
+                   COUNT(DISTINCT CASE WHEN n.add_ts >= ? THEN n.note_id END),
+                   COALESCE(SUM(n.comment_count), 0), COALESCE(MAX(h.last_seen_ts), 0)
+            FROM xhs_note_keyword_hit h
+            LEFT JOIN xhs_note n ON n.note_id = h.note_id
+            WHERE h.task_id = ? AND h.keyword IN ({ph})
+            GROUP BY h.keyword
+            """,
+            [started_ms, task_id] + keywords,
+        )
+    else:
+        cur.execute(
+            f"""
+            SELECT source_keyword, COUNT(*), COALESCE(SUM(comment_count), 0), COALESCE(MAX(add_ts), 0)
+            FROM xhs_note
+            WHERE source_keyword IN ({ph})
+            GROUP BY source_keyword
+            """,
+            keywords,
+        )
+    for row in cur.fetchall():
+        if task_id:
+            kw, post_count, persisted_post_count, new_post_count, platform_comments, last_note_ts = row
+        else:
+            kw, post_count, platform_comments, last_note_ts = row
+            persisted_post_count, new_post_count = post_count, 0
         item = rows.get(kw)
         if not item:
             continue
         item["post_count"] = post_count or 0
+        item["persisted_post_count"] = persisted_post_count or 0
+        item["new_post_count"] = new_post_count or 0
         item["platform_comment_count"] = platform_comments or 0
         item["last_note_ts"] = last_note_ts or 0
         item["last_activity_ts"] = max(item["last_activity_ts"], item["last_note_ts"])
         item["status"] = "已入库" if item["post_count"] else "等待"
 
-    cur.execute(
-        f"""
-        SELECT n.source_keyword, COUNT(*), COALESCE(MAX(c.add_ts), 0)
-        FROM xhs_note_comment c
-        JOIN xhs_note n ON c.note_id = n.note_id
-        WHERE n.source_keyword IN ({ph})
-        GROUP BY n.source_keyword
-        """,
-        keywords,
-    )
+    if task_id:
+        started_ms = int(started_at * 1000) if started_at else 0
+        cur.execute(
+            f"""
+            SELECT h.keyword, COUNT(DISTINCT c.id), COALESCE(MAX(c.add_ts), 0)
+            FROM xhs_note_keyword_hit h
+            JOIN xhs_note_comment c ON c.note_id = h.note_id
+            WHERE h.task_id = ? AND h.keyword IN ({ph}) AND c.add_ts >= ?
+            GROUP BY h.keyword
+            """,
+            [task_id] + keywords + [started_ms],
+        )
+    else:
+        cur.execute(
+            f"""
+            SELECT n.source_keyword, COUNT(*), COALESCE(MAX(c.add_ts), 0)
+            FROM xhs_note_comment c
+            JOIN xhs_note n ON c.note_id = n.note_id
+            WHERE n.source_keyword IN ({ph})
+            GROUP BY n.source_keyword
+            """,
+            keywords,
+        )
     for kw, comment_count, last_comment_ts in cur.fetchall():
         item = rows.get(kw)
         if not item:
@@ -1350,7 +1704,7 @@ def _crawl_keyword_stats(conn: sqlite3.Connection, keywords: list[str]) -> list[
     return [rows[kw] for kw in keywords]
 
 
-def _crawl_task_speed(conn: sqlite3.Connection, keywords: list[str]) -> dict:
+def _crawl_task_speed(conn: sqlite3.Connection, keywords: list[str], task_id: str = "") -> dict:
     if not keywords:
         return {"15": {"posts": 0, "comments": 0}, "30": {"posts": 0, "comments": 0}, "60": {"posts": 0, "comments": 0}}
     ph = _kw_placeholders(keywords)
@@ -1359,23 +1713,114 @@ def _crawl_task_speed(conn: sqlite3.Connection, keywords: list[str]) -> dict:
     cur = conn.cursor()
     for minutes in (15, 30, 60):
         cutoff = now_ms - minutes * 60 * 1000
-        cur.execute(
-            f"SELECT COUNT(*) FROM xhs_note WHERE source_keyword IN ({ph}) AND add_ts >= ?",
-            keywords + [cutoff],
-        )
+        if task_id:
+            cur.execute(
+                f"SELECT COUNT(DISTINCT note_id) FROM xhs_note_keyword_hit WHERE task_id = ? AND keyword IN ({ph}) AND first_seen_ts >= ?",
+                [task_id] + keywords + [cutoff],
+            )
+        else:
+            cur.execute(
+                f"SELECT COUNT(*) FROM xhs_note WHERE source_keyword IN ({ph}) AND add_ts >= ?",
+                keywords + [cutoff],
+            )
         posts = cur.fetchone()[0] or 0
-        cur.execute(
-            f"""
-            SELECT COUNT(*)
-            FROM xhs_note_comment c
-            JOIN xhs_note n ON c.note_id = n.note_id
-            WHERE n.source_keyword IN ({ph}) AND c.add_ts >= ?
-            """,
-            keywords + [cutoff],
-        )
+        if task_id:
+            cur.execute(
+                f"""
+                SELECT COUNT(DISTINCT c.id)
+                FROM xhs_note_comment c
+                JOIN xhs_note_keyword_hit h ON h.note_id = c.note_id
+                WHERE h.task_id = ? AND h.keyword IN ({ph}) AND c.add_ts >= ?
+                """,
+                [task_id] + keywords + [cutoff],
+            )
+        else:
+            cur.execute(
+                f"""
+                SELECT COUNT(*)
+                FROM xhs_note_comment c
+                JOIN xhs_note n ON c.note_id = n.note_id
+                WHERE n.source_keyword IN ({ph}) AND c.add_ts >= ?
+                """,
+                keywords + [cutoff],
+            )
         comments = cur.fetchone()[0] or 0
         speed[str(minutes)] = {"posts": posts, "comments": comments}
     return speed
+
+
+def _crawl_task_recent_notes(conn: sqlite3.Connection, task_id: str, limit: int = 12) -> list[dict]:
+    if not task_id:
+        return []
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT n.note_id, COALESCE(n.title, ''), COALESCE(n.desc, ''),
+               COALESCE(n.liked_count, 0), COALESCE(n.comment_count, 0),
+               COALESCE(MAX(h.last_seen_ts), 0), GROUP_CONCAT(DISTINCT h.keyword)
+        FROM xhs_note_keyword_hit h
+        JOIN xhs_note n ON n.note_id = h.note_id
+        WHERE h.task_id = ?
+        GROUP BY n.note_id, n.title, n.desc, n.liked_count, n.comment_count
+        ORDER BY MAX(h.last_seen_ts) DESC
+        LIMIT ?
+        """,
+        (task_id, limit),
+    )
+    return [
+        {
+            "note_id": row[0],
+            "title": row[1] or "(无标题)",
+            "desc": (row[2] or "")[:180],
+            "liked_count": row[3] or 0,
+            "platform_comment_count": row[4] or 0,
+            "hit_ts": row[5] or 0,
+            "keywords": [kw for kw in (row[6] or "").split(",") if kw],
+        }
+        for row in cur.fetchall()
+    ]
+
+
+def _crawl_task_totals(conn: sqlite3.Connection, task_id: str, started_at: float = 0) -> dict:
+    cur = conn.cursor()
+    started_ms = int(started_at * 1000) if started_at else 0
+    cur.execute(
+        """
+        SELECT COUNT(*), COUNT(persisted_note_id),
+               COALESCE(SUM(CASE WHEN add_ts >= ? THEN 1 ELSE 0 END), 0),
+               COALESCE(SUM(comment_count), 0), COALESCE(MAX(last_seen_ts), 0)
+        FROM (
+            SELECT h.note_id, n.note_id AS persisted_note_id, n.add_ts,
+                   COALESCE(n.comment_count, 0) AS comment_count,
+                   MAX(h.last_seen_ts) AS last_seen_ts
+            FROM xhs_note_keyword_hit h
+            LEFT JOIN xhs_note n ON n.note_id = h.note_id
+            WHERE h.task_id = ?
+            GROUP BY h.note_id, n.note_id, n.add_ts, n.comment_count
+        )
+        """,
+        (started_ms, task_id),
+    )
+    hits, persisted_posts, new_posts, platform_comments, last_hit_ts = cur.fetchone()
+    cur.execute(
+        """
+        SELECT COUNT(DISTINCT c.id), COALESCE(MAX(c.add_ts), 0)
+        FROM xhs_note_comment c
+        JOIN xhs_note_keyword_hit h ON h.note_id = c.note_id
+        WHERE h.task_id = ? AND c.add_ts >= ?
+        """,
+        (task_id, started_ms),
+    )
+    db_comments, last_comment_ts = cur.fetchone()
+    return {
+        "posts": hits or 0,
+        "persisted_posts": persisted_posts or 0,
+        "new_posts": new_posts or 0,
+        "existing_posts": max(0, (persisted_posts or 0) - (new_posts or 0)),
+        "db_comments": db_comments or 0,
+        "platform_comments": platform_comments or 0,
+        "last_activity_ts": max(last_hit_ts or 0, last_comment_ts or 0),
+    }
 
 
 def _crawl_task_summary(task: dict | None) -> dict | None:
@@ -1408,6 +1853,7 @@ def _crawl_task_summary(task: dict | None) -> dict | None:
             "total": log_total,
         },
         "keyword_stats": [],
+        "recent_notes": [],
         "speed": {"15": {"posts": 0, "comments": 0}, "30": {"posts": 0, "comments": 0}, "60": {"posts": 0, "comments": 0}},
         "totals": {
             "posts": 0,
@@ -1421,18 +1867,14 @@ def _crawl_task_summary(task: dict | None) -> dict | None:
     if not conn:
         return summary
     try:
-        keyword_stats = _crawl_keyword_stats(conn, keywords)
+        keyword_stats = _crawl_keyword_stats(conn, keywords, task.get("id") or "", started_at)
         summary["keyword_stats"] = keyword_stats
-        summary["speed"] = _crawl_task_speed(conn, keywords)
-        summary["totals"] = {
-            "posts": sum(k.get("post_count", 0) for k in keyword_stats),
-            "db_comments": sum(k.get("db_comment_count", 0) for k in keyword_stats),
-            "platform_comments": sum(k.get("platform_comment_count", 0) for k in keyword_stats),
-            "last_activity_ts": max([k.get("last_activity_ts", 0) for k in keyword_stats] or [0]),
-        }
+        summary["speed"] = _crawl_task_speed(conn, keywords, task.get("id") or "")
+        summary["totals"] = _crawl_task_totals(conn, task.get("id") or "", started_at)
+        summary["recent_notes"] = _crawl_task_recent_notes(conn, task.get("id") or "")
         current_keyword = summary["log"].get("current_keyword")
         for item in summary["keyword_stats"]:
-            if item["keyword"] == current_keyword and task.get("status") in ("starting", "running"):
+            if item["keyword"] == current_keyword and task.get("status") in ("starting", "running", "stopping"):
                 item["status"] = "当前"
     finally:
         conn.close()
@@ -1444,11 +1886,12 @@ def api_active_crawl_task_summary():
     from crawl_task_manager import list_crawl_tasks
 
     tasks = list_crawl_tasks(archived=False)
-    active = next((t for t in tasks if t.get("status") in ("starting", "running")), None)
+    active = next((t for t in tasks if t.get("status") in ("starting", "running", "stopping")), None)
     recent = tasks[0] if tasks else None
     return jsonify({
         "active_task": _crawl_task_summary(active),
         "recent_task": _crawl_task_summary(recent) if not active and recent else None,
+        "risk_policy": get_risk_policy_status(),
         "ts": time.time(),
     })
 
@@ -1483,19 +1926,50 @@ def api_create_crawl_task():
 def _launch_crawl_task(task_id):
     from crawl_task_manager import claim_crawl_task, fail_crawl_task_start, get_crawl_task, set_crawl_worker_pid
 
+    task = get_crawl_task(task_id)
+    if not task:
+        return jsonify({"error": "task not found"}), 404
+    task_config = task.get("config") or {}
+    dry_run = bool(task_config.get("dry_run"))
+    if not dry_run:
+        decision = reserve_launch(
+            task_id=task_id,
+            task_kind="search",
+            config=task_config,
+            total_posts=int(task_config.get("max_count", 0) or 0),
+        )
+        if not decision.allowed:
+            return jsonify({"error": decision.reason, "risk_policy": decision.as_dict()}), 429
+
     claimed, error = claim_crawl_task(task_id)
     if not claimed:
+        if not dry_run:
+            abort_launch(task_id, task_config.get("user_data_dir", ""), error)
         status = 404 if error == "task not found" else 409
         return jsonify({"error": error}), status
-    task = get_crawl_task(task_id) or {}
-    task_config = task.get("config") or {}
     enable_cdp = bool(task_config.get("enable_cdp"))
     require_cdp = bool(task_config.get("require_cdp"))
+    worker_env = os.environ.copy()
+    if not dry_run and decision.canary:
+        worker_env["MEDIACRAWLER_RISK_CANARY"] = "true"
     if enable_cdp:
-        cdp_status = start_cdp_chrome()
+        try:
+            cdp_status = start_cdp_chrome(task_config.get("cdp_debug_port"))
+        except Exception as exc:
+            fail_crawl_task_start(task_id, f"crawler browser unavailable: {exc}")
+            if not dry_run:
+                abort_launch(task_id, task_config.get("user_data_dir", ""), str(exc))
+            return jsonify({"error": f"crawler browser unavailable: {exc}"}), 500
         if not cdp_status.get("ok") and require_cdp:
             fail_crawl_task_start(task_id, cdp_status.get("error") or "CDP Chrome unavailable")
+            if not dry_run:
+                abort_launch(task_id, task_config.get("user_data_dir", ""), cdp_status.get("error") or "CDP unavailable")
             return jsonify({"error": cdp_status}), 500
+        if cdp_status.get("ok") and cdp_status.get("port"):
+            # The preferred port may be occupied.  Pass the actual reusable
+            # browser port to the worker instead of silently falling back to a
+            # newly launched standard browser.
+            worker_env["MEDIACRAWLER_TASK_CDP_DEBUG_PORT"] = str(cdp_status["port"])
     uv = shutil.which("uv")
     command = ([uv, "run", "python"] if uv else [sys.executable]) + [
         os.path.join(DASHBOARD_DIR, "crawl_runner.py"),
@@ -1506,13 +1980,18 @@ def _launch_crawl_task(task_id):
         worker = subprocess.Popen(
             command,
             cwd=MEDIACRAWLER_ROOT,
+            env=worker_env,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
         set_crawl_worker_pid(task_id, worker.pid)
+        if not dry_run:
+            confirm_launch(task_id, task_config.get("user_data_dir", ""))
     except Exception as exc:
         fail_crawl_task_start(task_id, str(exc))
+        if not dry_run:
+            abort_launch(task_id, task_config.get("user_data_dir", ""), str(exc))
         return jsonify({"error": f"failed to start crawl worker: {exc}"}), 500
     return jsonify({"ok": True, "pid": worker.pid, "status": "starting"}), 202
 
@@ -1522,15 +2001,90 @@ def api_start_crawl_task(task_id):
     return _launch_crawl_task(task_id)
 
 
+@app.route("/api/risk-policy/status")
+def api_risk_policy_status():
+    user_data_dir = request.args.get("user_data_dir", "%s_user_data_dir_account02")
+    return jsonify(get_risk_policy_status(user_data_dir))
+
+
+def _auto_task_config(task: dict) -> dict:
+    config = task.get("config")
+    if isinstance(config, dict):
+        return config
+    try:
+        return json.loads(task.get("config_json") or "{}")
+    except (TypeError, json.JSONDecodeError):
+        return {}
+
+
+def _auto_start_once() -> bool:
+    """Start at most one queued auto task; denied tasks stay pending."""
+    from crawl_task_manager import list_crawl_tasks
+    from task_manager import list_tasks
+
+    crawl_tasks = list_crawl_tasks(archived=False)
+    comment_tasks = list_tasks(archived=False)
+    active_statuses = {"starting", "running", "stopping"}
+    if any(task.get("status") in active_statuses for task in crawl_tasks):
+        return False
+    if any(task.get("status") in active_statuses for task in comment_tasks):
+        return False
+
+    # Searches go first so a cooled account can accumulate the two required
+    # clean canaries before any queued comment work is considered.
+    for task in reversed(crawl_tasks):
+        if task.get("status") != "pending":
+            continue
+        if _auto_task_config(task).get("start_mode") != "auto":
+            continue
+        result = _launch_crawl_task(task["id"])
+        status_code = result[1] if isinstance(result, tuple) else result.status_code
+        if status_code == 202:
+            logger.info("[risk-scheduler] started queued search task %s", task["id"])
+            return True
+        return False
+
+    for task in reversed(comment_tasks):
+        if task.get("status") != "pending":
+            continue
+        if _auto_task_config(task).get("start_mode") != "auto":
+            continue
+        result = _launch_comment_task(task["id"])
+        status_code = result[1] if isinstance(result, tuple) else result.status_code
+        if status_code == 202:
+            logger.info("[risk-scheduler] started queued comment task %s", task["id"])
+            return True
+        return False
+    return False
+
+
+def risk_scheduler_loop() -> None:
+    while True:
+        try:
+            with app.app_context():
+                _auto_start_once()
+        except Exception:
+            logger.exception("[risk-scheduler] scheduler iteration failed")
+        time.sleep(max(5, RISK_SCHEDULER_INTERVAL))
+
+
 @app.route("/api/crawl-tasks/<task_id>/cancel", methods=["POST"])
 def api_cancel_crawl_task(task_id):
-    from crawl_task_manager import get_crawl_task, mark_crawl_task_cancelled
+    from crawl_task_manager import (
+        clear_crawl_task_stop_request,
+        get_crawl_task,
+        mark_crawl_task_cancelled,
+        request_crawl_task_stop,
+    )
 
     task = get_crawl_task(task_id)
     if not task:
         return jsonify({"error": "task not found"}), 404
     if task.get("status") not in ("starting", "running"):
         return jsonify({"error": f"task is {task.get('status')}, cannot cancel"}), 409
+    ok, error = request_crawl_task_stop(task_id)
+    if not ok:
+        return jsonify({"error": error}), 409
     pid = task.get("worker_pid")
     killed = False
     kill_errors = []
@@ -1540,9 +2094,14 @@ def api_cancel_crawl_task(task_id):
             killed = True
         except ProcessLookupError:
             killed = True
+            mark_crawl_task_cancelled(task_id)
         except Exception as exc:
             kill_errors.append(str(exc))
-    mark_crawl_task_cancelled(task_id)
+    if not pid:
+        mark_crawl_task_cancelled(task_id)
+    elif kill_errors:
+        clear_crawl_task_stop_request(task_id, "停止失败：" + "; ".join(kill_errors))
+        return jsonify({"ok": False, "killed": False, "errors": kill_errors}), 500
     return jsonify({"ok": True, "killed": killed, "errors": kill_errors})
 
 
@@ -1594,32 +2153,18 @@ def api_worth_digging():
     if not conn:
         return jsonify({"error": "no DB connection"})
     try:
-        cur = conn.cursor()
-        ph = _kw_placeholders(keywords)
-
-        # Score the complete active-keyword set. Saved comment counts are
-        # aggregated once to avoid one query per post.
-        cur.execute(
-            f"""SELECT n.note_id, n.title, n.source_keyword, n.liked_count,
-                n.comment_count, LENGTH(n.desc) AS desc_length,
-                COUNT(c.comment_id) AS db_comment_count
-            FROM xhs_note n
-            LEFT JOIN xhs_note_comment c ON c.note_id = n.note_id
-            WHERE n.source_keyword IN ({ph})
-            GROUP BY n.note_id""",
-            keywords,
-        )
-
+        rows, note_keywords = _asset_scope_rows(conn, keywords)
         posts = []
-        for r in cur.fetchall():
+        for r in rows:
             post = {
                 "note_id": r[0],
                 "title": r[1],
-                "source_keyword": r[2],
-                "liked_count": r[3] or 0,
-                "comment_count": r[4] or 0,
-                "desc_length": r[5] or 0,
-                "db_comment_count": r[6] or 0,
+                "source_keyword": r[3],
+                "keywords": note_keywords.get(r[0], []),
+                "liked_count": r[4] or 0,
+                "comment_count": r[6] or 0,
+                "desc_length": len(r[2] or ""),
+                "db_comment_count": r[9] or 0,
             }
             post.update(score_post(post))
             post.pop("desc_length")
@@ -1777,6 +2322,8 @@ def api_log_stats():
         for line in errors:
             if "LoginError" in line:
                 patterns["LoginError"] = patterns.get("LoginError", 0) + 1
+            elif "RiskControlError" in line or "[risk-control-stop]" in line:
+                patterns["RiskControlError"] = patterns.get("RiskControlError", 0) + 1
             elif "DataFetchError" in line:
                 patterns["DataFetchError"] = patterns.get("DataFetchError", 0) + 1
             elif "IPBlockError" in line:
@@ -1802,5 +2349,9 @@ if __name__ == "__main__":
     bg = threading.Thread(target=snapshot_loop, daemon=True)
     bg.start()
     logger.info(f'[dashboard] Snapshot worker started (interval={SNAPSHOT_INTERVAL}s)')
+    if RISK_SCHEDULER_ENABLED:
+        risk_bg = threading.Thread(target=risk_scheduler_loop, daemon=True)
+        risk_bg.start()
+        logger.info(f'[dashboard] Risk scheduler started (interval={RISK_SCHEDULER_INTERVAL}s)')
     logger.info(f'[dashboard] Starting on http://{HOST}:{PORT}')
     app.run(host=HOST, port=PORT, debug=False, threaded=True)

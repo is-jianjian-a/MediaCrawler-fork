@@ -75,8 +75,12 @@ CRAWLER_MIN_SLEEP_SEC = int(os.getenv("MEDIACRAWLER_CRAWLER_MIN_SLEEP_SEC", "20"
 CRAWLER_MAX_SLEEP_SEC = int(os.getenv("MEDIACRAWLER_CRAWLER_MAX_SLEEP_SEC", "40"))
 # 评论抓取间隔（秒）。评论接口本身较轻，但仍需要避免连续请求。
 CRAWLER_COMMENT_SLEEP_SEC = int(os.getenv("MEDIACRAWLER_CRAWLER_COMMENT_SLEEP_SEC", "5"))
+XHS_INTER_NOTE_SLEEP_SEC = float(os.getenv("MEDIACRAWLER_XHS_INTER_NOTE_SLEEP_SEC", "0"))
 # 单条帖子详情请求超时（秒）。超过后跳过该条，避免任务静默卡死。
 XHS_NOTE_DETAIL_TIMEOUT_SEC = int(os.getenv("MEDIACRAWLER_XHS_NOTE_DETAIL_TIMEOUT_SEC", "75"))
+# Dashboard-managed search tasks wait after browser/login readiness before the
+# first search request.  Direct CLI runs keep the historical zero-delay default.
+XHS_PRE_SEARCH_DELAY_SEC = int(os.getenv("MEDIACRAWLER_XHS_PRE_SEARCH_DELAY_SEC", "0"))
 
 # Whether to enable IP proxy
 ENABLE_IP_PROXY = False
@@ -152,8 +156,24 @@ USER_DATA_DIR = os.getenv(
 #     "03": "%s_user_data_dir_account03",
 # }
 
-# The number of pages to start crawling starts from the first page by default
-START_PAGE = 1
+MAX_START_PAGE = 1000
+
+
+def parse_start_page(value) -> int:
+    """Parse an auditable positive search start page."""
+    try:
+        start_page = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("MEDIACRAWLER_START_PAGE must be an integer") from exc
+    if not 1 <= start_page <= MAX_START_PAGE:
+        raise ValueError(
+            f"MEDIACRAWLER_START_PAGE must be between 1 and {MAX_START_PAGE}"
+        )
+    return start_page
+
+
+# The number of pages to start crawling starts from the first page by default.
+START_PAGE = parse_start_page(os.getenv("MEDIACRAWLER_START_PAGE", "1"))
 
 # 是否启用智能增量抓取（先检查数据库已有数量）
 # 仅在 SAVE_DATA_OPTION 为 db/sqlite/postgres 时生效

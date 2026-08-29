@@ -33,5 +33,9 @@ class NoteNotFoundError(RequestError):
     """Note does not exist or is abnormal"""
 
 
+class RiskControlError(RequestError):
+    """Xiaohongshu explicitly requested CAPTCHA/risk verification."""
+
+
 class LoginError(Exception):
     """Login failed (QR code, phone, or cookie)"""
