@@ -120,12 +120,39 @@ class CommentFetcherTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             browser_path = self._make_browser_executable(temp_dir)
             resolved_browser_path = str(Path(browser_path).resolve())
+            content_db = os.path.join(temp_dir, "content.db")
+            import sqlite3
+            conn = sqlite3.connect(content_db)
+            conn.execute(
+                "CREATE TABLE xhs_note (note_id TEXT, crawler_account TEXT)"
+            )
+            conn.execute("INSERT INTO xhs_note VALUES ('note-1', 'test')")
+            conn.commit()
+            conn.close()
+            account = {
+                "account_id": "test",
+                "user_data_dir": "%s_user_data_dir_accounttest",
+                "browser_path": resolved_browser_path,
+                "sqlite_db_path": content_db,
+            }
             created_configs = []
 
             with (
+                mock.patch.object(
+                    dashboard_server,
+                    "bind_task_config",
+                    side_effect=lambda config, **kwargs: (
+                        {**config, **account}, account
+                    ),
+                ),
+                mock.patch.object(
+                    dashboard_server,
+                    "_with_crawler_db",
+                    side_effect=lambda account_id="": sqlite3.connect(content_db),
+                ),
                 mock.patch(
                     "task_manager.create_task",
-                    side_effect=lambda name, posts, config, group_tag="": (
+                    side_effect=lambda name, posts, config, group_tag="", account_id="": (
                         created_configs.append(config) or "task-browser"
                     ),
                 ),
@@ -136,15 +163,16 @@ class CommentFetcherTests(unittest.TestCase):
                     json={
                         "name": "isolated-browser-task",
                         "posts": [{"note_id": "note-1"}],
+                        "account_id": "test",
                         "config": {
                             "browser_mode": "standard",
-                            "browser_path": browser_path,
                         },
                     },
                 )
 
             self.assertEqual(response.status_code, 200)
-            self.assertEqual(created_configs[0]["browser_path"], browser_path)
+            self.assertEqual(created_configs[0]["browser_path"], resolved_browser_path)
+            self.assertEqual(created_configs[0]["account_id"], "test")
             self.assertEqual(
                 created_configs[0]["publish_date_after"],
                 comment_fetcher.DEFAULT_COMMENT_PUBLISH_DATE_AFTER,
@@ -158,13 +186,21 @@ class CommentFetcherTests(unittest.TestCase):
                     "task_manager.get_task",
                     return_value={
                         "config_json": json.dumps({
+                            "account_id": "test",
                             "browser_mode": "standard",
                             "enable_cdp": False,
                             "require_cdp": False,
                             "browser_path": browser_path,
                         }),
+                        "account_id": "test",
                     },
                 ),
+                mock.patch.object(
+                    dashboard_server,
+                    "bind_task_config",
+                    return_value=({**account, "browser_mode": "standard"}, account),
+                ),
+                mock.patch.object(dashboard_server, "_account_has_active_task", return_value=False),
                 mock.patch("task_manager.fail_task_start") as fail_start,
                 mock.patch("task_manager.set_task_worker_pid"),
                 mock.patch.object(
@@ -210,19 +246,33 @@ class CommentFetcherTests(unittest.TestCase):
         create_task.assert_not_called()
 
     def test_dashboard_standard_task_without_browser_path_fails_before_spawn(self):
+        account = {
+            "account_id": "missing-browser",
+            "user_data_dir": "%s_user_data_dir_missing_browser",
+            "browser_path": "",
+            "sqlite_db_path": "/tmp/missing-browser.db",
+        }
         with (
             dashboard_server.app.app_context(),
             mock.patch("task_manager.claim_task", return_value=(True, "")),
             mock.patch(
                 "task_manager.get_task",
                 return_value={
+                    "account_id": "missing-browser",
                     "config_json": json.dumps({
+                        "account_id": "missing-browser",
                         "browser_mode": "standard",
                         "enable_cdp": False,
                         "require_cdp": False,
                     }),
                 },
             ),
+            mock.patch.object(
+                dashboard_server,
+                "bind_task_config",
+                return_value=({**account, "browser_mode": "standard"}, account),
+            ),
+            mock.patch.object(dashboard_server, "_account_has_active_task", return_value=False),
             mock.patch("task_manager.fail_task_start") as fail_start,
             mock.patch("task_manager.set_task_worker_pid"),
             mock.patch.object(

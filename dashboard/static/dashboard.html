@@ -963,6 +963,9 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
       <!-- worth panel -->
       <div class="tab-panel" id="panelWorth">
         <div class="worth-toolbar">
+          <select class="select" id="worthAccountSelect" onchange="onWorthAccountChange()" style="width:180px">
+            <option value="">加载账号…</option>
+          </select>
           <button class="btn btn-sm" onclick="loadWorthDigging()">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-9-9c2.5 0 4.8 1 6.5 2.6"/><path d="M21 3v6h-6"/></svg>
             重新计算
@@ -1005,18 +1008,23 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
                 <div class="field-help">用于任务列表识别，建议包含主题和日期。</div>
               </div>
               <div class="field">
+                <label>小红书账号</label>
+                <select class="select" id="taskAccountSelect" disabled></select>
+                <div class="field-help">账号决定独立登录态、内容库、日志与风控状态。</div>
+              </div>
+              <div class="field">
                 <label>分组标签（可选）</label>
                 <input class="input" id="taskGroupTag" type="text" maxlength="40" placeholder="如：华为流畅 / 华为卡顿">
                 <div class="field-help">把同类评论补全任务折叠成一组；留空归入“未分组”。</div>
               </div>
               <div class="field">
                 <label>Batch size</label>
-                <input class="input" id="taskBatchSize" type="number" min="1" max="20" value="10">
+                <input class="input" id="taskBatchSize" type="number" min="1" max="2" value="2">
                 <div class="field-help">每次打开浏览器处理的帖子数。越大越少开浏览器，但单批失败影响也更大。</div>
               </div>
               <div class="field">
                 <label>一级评论上限 / 帖</label>
-                <input class="input" id="taskMaxComments" type="number" min="1" max="500" value="30">
+                <input class="input" id="taskMaxComments" type="number" min="1" max="5" value="5">
                 <div class="field-help">每篇帖子最多抓取多少条一级评论。</div>
               </div>
               <div class="field">
@@ -1060,18 +1068,13 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
                 </div>
                 <div class="field">
                   <label>评论帖间隔秒</label>
-                  <input class="input" id="taskCommentSleep" type="number" min="1" max="120" value="30">
-                  <div class="field-help">一篇帖子评论抓取完成后再等 30 秒；不是逐条评论间隔。</div>
+                  <input class="input" id="taskCommentSleep" type="number" min="90" max="120" value="90">
+                  <div class="field-help">账号级风控要求至少 90 秒。</div>
                 </div>
                 <div class="field">
                   <label>仅处理前 N 条</label>
                   <input class="input" id="taskLimit" type="number" min="0" max="100" value="0">
                   <div class="field-help">0 表示处理任务内全部待处理帖子；测试时可填 1-5。</div>
-                </div>
-                <div class="field">
-                  <label>浏览器 Profile</label>
-                  <input class="input" id="taskUserDataDir" type="text" value="%s_user_data_dir_account02">
-                  <div class="field-help">对应 browser_data 下的用户数据目录模板；影响登录态隔离。</div>
                 </div>
                 <div class="switch-field">
                   <label><input type="checkbox" id="taskDryRun"> Dry run</label>
@@ -1221,6 +1224,11 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
                   <div class="field-help">用于任务列表识别，建议包含主题和日期。</div>
                 </div>
                 <div class="field">
+                  <label>小红书账号</label>
+                  <select class="select" id="crawlAccountSelect"></select>
+                  <div class="field-help">不同账号可同步运行；同一账号始终串行。</div>
+                </div>
+                <div class="field">
                   <label>发布日期之后入库</label>
                   <input class="input" id="crawlDateAfter" type="date" value="2026-06-10">
                   <div class="field-help">只保存该日期之后发布的小红书笔记。</div>
@@ -1347,24 +1355,12 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
                     <div class="field-help">开启评论后，每篇帖子评论任务之间等待；默认 30 秒。</div>
                   </div>
                   <div class="field">
-                    <label>浏览器 Profile</label>
-                    <input class="input" id="crawlUserDataDir" type="text" value="%s_user_data_dir_account02">
-                    <div class="field-help">影响登录态隔离。</div>
-                  </div>
-                  <div class="field">
                     <label>浏览器模式</label>
-                    <select class="select" id="crawlBrowserMode">
-                      <option value="standard">标准模式</option>
-                      <option value="cdp_optional" selected>CDP 可用则用（默认）</option>
-                      <option value="cdp_required">必须 CDP</option>
-                    </select>
-                    <div class="field-help">默认优先复用常驻 CDP 浏览器；连接不上会回退标准模式。</div>
+                    <input type="hidden" id="crawlBrowserMode" value="standard">
+                    <input class="input" value="账号专属隔离 Chromium" disabled>
+                    <div class="field-help">Profile 路由由账号注册表锁定；禁止 CDP 和系统 Chrome。</div>
                   </div>
-                  <div class="field">
-                    <label>CDP 端口</label>
-                    <input class="input" id="crawlCdpPort" type="number" min="1" max="65535" value="9222">
-                    <div class="field-help">仅 CDP 模式使用。</div>
-                  </div>
+                  <input type="hidden" id="crawlCdpPort" value="9222">
                   <div class="switch-field">
                     <label><input type="checkbox" id="crawlDryRun"> Dry run</label>
                     <div class="field-help">只生成任务日志，不真正启动爬虫。</div>
@@ -1451,6 +1447,7 @@ let trendChart=null, postRateChart=null, commentRateChart=null, autoRefresh=true
 let _worthPosts=[], _groups=[], _activeGroup=null, _sourceKeys=[], _historyMinutes=180, _velocityMinutes=180;
 let _taskDraftPosts=[], _selectedTaskId='', _commentTaskView='attention', _activeKwChips=new Set();
 let _crawlPresets=[], _crawlKeywordGroups=[], _crawlTasks=[], _selectedCrawlKeywords=new Set(), _selectedCrawlTaskId='', _showArchivedCrawlTasks=false, _crawlWorkspaceView='detail';
+let _xhsAccounts=[], _defaultXhsAccount='02';
 let _crawlMode='standard';
 
 const C = {
@@ -1472,6 +1469,46 @@ async function fetchJSON(url){
   }finally{
     clearTimeout(timeout);
   }
+}
+
+function selectedXhsAccount(selectId){
+  return document.getElementById(selectId)?.value||_defaultXhsAccount;
+}
+function accountQuery(accountId){
+  return '?account_id='+encodeURIComponent(accountId||_defaultXhsAccount);
+}
+function renderXhsAccountSelects(){
+  const enabled=_xhsAccounts.filter(account=>account.enabled);
+  const options=enabled.map(account=>{
+    const mode=account.storage_mode==='dedicated'?'独立库':'历史共享库';
+    return `<option value="${escapeHtml(account.account_id)}">${escapeHtml(account.display_name)} · ${mode}</option>`;
+  }).join('');
+  ['worthAccountSelect','taskAccountSelect','crawlAccountSelect'].forEach(id=>{
+    const select=document.getElementById(id);
+    if(!select) return;
+    const previous=select.value||_defaultXhsAccount;
+    select.innerHTML=options||'<option value="">没有可用账号</option>';
+    if(enabled.some(account=>account.account_id===previous)) select.value=previous;
+    else if(enabled.some(account=>account.account_id===_defaultXhsAccount)) select.value=_defaultXhsAccount;
+    else if(enabled.length) select.value=enabled[0].account_id;
+  });
+  const worthAccount=selectedXhsAccount('worthAccountSelect');
+  const taskSelect=document.getElementById('taskAccountSelect');
+  if(taskSelect) taskSelect.value=worthAccount;
+}
+async function loadXhsAccounts(){
+  const data=await fetchJSON('/api/xhs-accounts');
+  _xhsAccounts=data.accounts||[];
+  _defaultXhsAccount=data.default_account_id||'02';
+  renderXhsAccountSelects();
+}
+async function onWorthAccountChange(){
+  const accountId=selectedXhsAccount('worthAccountSelect');
+  const taskSelect=document.getElementById('taskAccountSelect');
+  if(taskSelect) taskSelect.value=accountId;
+  _taskDraftPosts=[];
+  closeTaskComposer();
+  await loadWorthDigging();
 }
 
 function fmtTime(ts){ return ts?new Date(ts*1000).toLocaleTimeString('zh-CN',{hour12:false}):'--'; }
@@ -1813,9 +1850,10 @@ async function loadActiveCrawlTask(){
   if(statusEl){ statusEl.className='status-chip starting'; statusEl.textContent='刷新中'; }
   try{
     const data=await fetchJSON('/api/crawl-tasks/active-summary');
-    let task=data.active_task;
+    const activeTasks=data.active_tasks||[];
+    let task=data.active_task||activeTasks[0];
     const recent=data.recent_task;
-    const risk=data.risk_policy||{};
+    const risk=(data.risk_policies||{})[(task&&task.account_id)||_defaultXhsAccount]||data.risk_policy||{};
     const riskLabel={normal:'正常',cooldown:'冷却',canary:'恢复探针',locked:'当日熔断'}[risk.state]||'未知';
     const riskNext=(risk.state&&risk.state!=='normal'&&risk.can_run_at)?` · 最早 ${fmtDateHour(risk.can_run_at)}`:'';
     const riskSummary=`风控 ${riskLabel} · 探针 ${risk.clean_canaries||0}/${risk.required_clean_canaries||2} · 12h任务会话 ${risk.launches_12h||0}/${risk.max_launches_12h||16}${riskNext}`;
@@ -1863,8 +1901,8 @@ async function loadActiveCrawlTask(){
     const currentKeyword=log.current_keyword||'--';
     document.getElementById('activeTaskStatus').className='status-chip '+escapeHtml(task.status||'pending');
     document.getElementById('activeTaskStatus').textContent=crawlStatusLabel(task.status||'pending',task.exit_code,task.error_message);
-    document.getElementById('activeTaskName').textContent=task.name||task.id||'未命名任务';
-    document.getElementById('activeTaskSub').textContent='任务 '+(task.id||'--')+' · '+(task.keywords||[]).length+' 个关键词 · '+riskSummary;
+    document.getElementById('activeTaskName').textContent=(task.name||task.id||'未命名任务')+' · 账号 '+(task.account_id||_defaultXhsAccount);
+    document.getElementById('activeTaskSub').textContent='任务 '+(task.id||'--')+' · '+(task.keywords||[]).length+' 个关键词'+(activeTasks.length>1?' · 另有 '+(activeTasks.length-1)+' 个账号并行':'')+' · '+riskSummary;
     const activityGap=totals.last_activity_ts?Math.max(0,Date.now()-totals.last_activity_ts)/1000:null;
     const staleLimit=Math.max(600,Number((task.config||{}).max_sleep||65)*3);
     const healthText=!task.worker_alive?'进程失联':(activityGap!=null&&activityGap>staleLimit?'进程存活·久未写入':'进程正常');
@@ -2149,7 +2187,8 @@ function manualRefresh(){
    ============================================================ */
 async function loadWorthDigging(){
   document.getElementById('worthStatus').innerHTML='<span class="spin-load"></span> 加载中…';
-  const data=await fetchJSON('/api/worth-digging');
+  const accountId=selectedXhsAccount('worthAccountSelect');
+  const data=await fetchJSON('/api/worth-digging'+accountQuery(accountId));
   _worthPosts=data.posts||[];
   document.getElementById('worthBadge').textContent=data.high_priority||0;
   const highMetric=document.getElementById('kpiSpeed');
@@ -2278,18 +2317,18 @@ async function submitTaskFromComposer(){
     const getSubComments=document.getElementById('taskGetSubComments').value==='true';
     const browserMode=document.getElementById('taskBrowserMode').value;
     config={
-      batch_size:readBoundedNumber('taskBatchSize','Batch size',1,20,false),
-      max_comments:readBoundedNumber('taskMaxComments','一级评论上限',1,500,false),
+      account_id:selectedXhsAccount('taskAccountSelect'),
+      batch_size:readBoundedNumber('taskBatchSize','Batch size',1,2,false),
+      max_comments:readBoundedNumber('taskMaxComments','一级评论上限',1,5,false),
       max_sub_comments:getSubComments?readBoundedNumber('taskMaxSubComments','二级评论上限',0,1000,false):0,
       get_sub_comments:getSubComments,
       delay:readBoundedNumber('taskDelay','间隔秒数',0,120,true),
       min_sleep:readBoundedNumber('taskMinSleep','详情最小等待秒',0,300,false),
       max_sleep:readBoundedNumber('taskMaxSleep','详情最大等待秒',0,600,false),
-      comment_sleep:readBoundedNumber('taskCommentSleep','评论帖间隔秒',1,120,false),
+      comment_sleep:readBoundedNumber('taskCommentSleep','评论帖间隔秒',90,120,false),
       max_concurrency:1,
       limit:readBoundedNumber('taskLimit','仅处理前 N 条',0,100,false),
       dry_run:document.getElementById('taskDryRun').checked,
-      user_data_dir:document.getElementById('taskUserDataDir').value.trim()||'%s_user_data_dir_account02',
       browser_mode:browserMode,
       enable_cdp:browserMode==='cdp_optional'||browserMode==='cdp_required',
       require_cdp:browserMode==='cdp_required',
@@ -2303,7 +2342,7 @@ async function submitTaskFromComposer(){
   }
   const noteIds=_taskDraftPosts.map(p=>p.note_id);
   try{
-    const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,posts:_taskDraftPosts,config,group_tag:groupTag})});
+    const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,posts:_taskDraftPosts,config,account_id:config.account_id,group_tag:groupTag})});
     const data=await r.json();
     if(!data.ok){ alert('创建失败：'+(data.error||'未知错误')); return; }
     _selectedTaskId=data.id;
@@ -2525,6 +2564,7 @@ function toggleCrawlCommentConfig(){
 function readCrawlConfig(){
   const browserMode=document.getElementById('crawlBrowserMode').value;
   return {
+    account_id:selectedXhsAccount('crawlAccountSelect'),
     topic:document.getElementById('crawlTopic').value.trim()||'fluency_lag',
     stop_condition:document.getElementById('crawlStopCondition').value,
     publish_date_after:document.getElementById('crawlDateAfter').value,
@@ -2544,10 +2584,9 @@ function readCrawlConfig(){
     comment_sleep:readBoundedNumber('crawlCommentSleep','评论帖间隔秒',1,120,false),
     headless:true,
     dry_run:document.getElementById('crawlDryRun').checked,
-    user_data_dir:document.getElementById('crawlUserDataDir').value.trim()||'%s_user_data_dir_account02',
     browser_mode:browserMode,
-    enable_cdp:browserMode==='cdp_optional'||browserMode==='cdp_required',
-    require_cdp:browserMode==='cdp_required',
+    enable_cdp:false,
+    require_cdp:false,
     cdp_debug_port:readBoundedNumber('crawlCdpPort','CDP 端口',1,65535,false),
     start_mode:document.getElementById('crawlStartMode').value
   };
@@ -2568,7 +2607,7 @@ async function submitCrawlTask(){
     return;
   }
   try{
-    const r=await fetch('/api/crawl-tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,keywords,config})});
+    const r=await fetch('/api/crawl-tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,keywords,config,account_id:config.account_id})});
     const data=await r.json();
     if(!r.ok||!data.ok){ alert('创建失败：'+(data.error||'未知错误')); return; }
     _selectedCrawlTaskId=data.id;
@@ -2685,6 +2724,7 @@ function renderCrawlTaskList(){
       <div class="task-meta">
         <span>${created}</span>
         <span>${kws.length} 词</span>
+        <span>账号 ${escapeHtml(t.account_id||cfg.account_id||'--')}</span>
         <span class="mono task-id">${escapeHtml(t.id)}</span>
       </div>
       <div class="crawl-task-keywords">${escapeHtml(kws.join('，'))}</div>
@@ -2726,6 +2766,7 @@ function renderSelectedCrawlTask(task){
       <span>完成 ${completed}</span>
       <span>PID ${escapeHtml(task.worker_pid||'--')}</span>
       <span>退出码 ${task.exit_code==null?'--':escapeHtml(task.exit_code)}</span>
+      <span>账号 ${escapeHtml(task.account_id||cfg.account_id||'--')}</span>
     </div>
     <div class="config">
       <span class="tag">${kws.length} 词</span>
@@ -2893,6 +2934,7 @@ async function loadTasks(){
       </div>
       <div class="task-meta">
         <span class="mono task-id">${t.id}</span>
+        <span>账号 ${escapeHtml(t.account_id||'--')}</span>
         <span>完成 ${t.completed_posts||0}/${t.total_posts} · 待处理 ${pending}</span>
         <span>失败 ${t.failed_posts||0}</span>
         <span>新增评论 ${t.total_comments_added||0}</span>
@@ -2917,7 +2959,7 @@ async function loadTasks(){
   containAllScrollAreas(document.getElementById('panelTask'));
 }
 function statusLabel(s){
-  return {pending:'待处理',starting:'启动中',running:'运行中',completed:'已完成',completed_with_errors:'完成(有错误)'}[s]||s;
+  return {pending:'待处理',starting:'启动中',running:'运行中',completed:'已完成',completed_with_errors:'完成(有错误)',cancelled:'主动停止'}[s]||s;
 }
 function parseTaskConfig(task){
   if(!task) return {};
@@ -2941,7 +2983,7 @@ function renderTaskConfig(config){
     (config.limit&&config.limit>0)?('仅处理前 '+config.limit+' 条'):'处理全部待处理',
     config.dry_run?'Dry run':'真实执行',
     browserModeLabel,
-    'Profile '+(config.user_data_dir||'%s_user_data_dir_account02'),
+    '账号 '+(config.account_id||'--'),
     (config.enable_cdp?('CDP '+(config.cdp_debug_port||9222)):'CDP 关闭')
   ].map(x=>`<span class="tag">${escapeHtml(x)}</span>`).join('');
 }
@@ -3477,6 +3519,7 @@ function toggleAutoRefresh(){
    Init
    ============================================================ */
 async function init(){
+  await loadXhsAccounts();
   await loadGroups();
   await loadSourceKeys();
   if(document.body.dataset.mainView==='tasks') switchTab('crawl');

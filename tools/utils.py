@@ -29,14 +29,19 @@ from .time_util import *
 
 def init_logging_config():
     level = logging.INFO
-    log_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
-    os.makedirs(log_dir, exist_ok=True)
+    default_log_path = os.path.join(
+        os.path.dirname(os.path.dirname(__file__)), "logs", "crawler.log"
+    )
+    log_path = os.path.abspath(
+        os.path.expanduser(os.getenv("MEDIACRAWLER_LOG_PATH", default_log_path))
+    )
+    os.makedirs(os.path.dirname(log_path), exist_ok=True)
 
     handlers = [logging.StreamHandler()]
     try:
         from logging.handlers import RotatingFileHandler
         fh = RotatingFileHandler(
-            os.path.join(log_dir, "crawler.log"),
+            log_path,
             maxBytes=10 * 1024 * 1024,  # 10MB rotate
             backupCount=3,
             encoding="utf-8",

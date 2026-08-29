@@ -40,13 +40,24 @@ sys.path.insert(0, MEDIACRAWLER_ROOT)
 
 # --- task DB ---
 
+def _connect() -> sqlite3.Connection:
+    """Open the shared control DB with multi-worker-safe defaults."""
+    conn = sqlite3.connect(TASK_DB, timeout=30)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=30000")
+    conn.execute("PRAGMA foreign_keys=ON")
+    return conn
+
+
 def init_task_db():
     """Initialize task manager SQLite DB."""
     os.makedirs(os.path.dirname(TASK_DB), exist_ok=True)
-    conn = sqlite3.connect(TASK_DB)
+    conn = _connect()
     conn.execute("""
         CREATE TABLE IF NOT EXISTS tasks (
             id TEXT PRIMARY KEY,
+            account_id TEXT,
             name TEXT NOT NULL,
             status TEXT DEFAULT 'pending',
             created_at REAL NOT NULL,
@@ -60,18 +71,36 @@ def init_task_db():
             log_path TEXT,
             worker_pid INTEGER,
             archived_at REAL,
-            error_message TEXT
+            error_message TEXT,
+            exit_code INTEGER,
+            stop_requested_at REAL,
+            stop_source TEXT,
+            stop_reason TEXT
         )
     """)
     existing_cols = {
         row[1] for row in conn.execute("PRAGMA table_info(tasks)").fetchall()
     }
+    if "account_id" not in existing_cols:
+        conn.execute("ALTER TABLE tasks ADD COLUMN account_id TEXT")
     if "worker_pid" not in existing_cols:
         conn.execute("ALTER TABLE tasks ADD COLUMN worker_pid INTEGER")
     if "archived_at" not in existing_cols:
         conn.execute("ALTER TABLE tasks ADD COLUMN archived_at REAL")
     if "group_tag" not in existing_cols:
         conn.execute("ALTER TABLE tasks ADD COLUMN group_tag TEXT DEFAULT ''")
+    for col, ddl in {
+        "exit_code": "ALTER TABLE tasks ADD COLUMN exit_code INTEGER",
+        "stop_requested_at": "ALTER TABLE tasks ADD COLUMN stop_requested_at REAL",
+        "stop_source": "ALTER TABLE tasks ADD COLUMN stop_source TEXT",
+        "stop_reason": "ALTER TABLE tasks ADD COLUMN stop_reason TEXT",
+    }.items():
+        if col not in existing_cols:
+            conn.execute(ddl)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_tasks_account_status "
+        "ON tasks(account_id, status)"
+    )
     conn.execute("""
         CREATE TABLE IF NOT EXISTS task_posts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -96,15 +125,31 @@ def init_task_db():
     conn.close()
 
 
-def create_task(name: str, posts: List[Dict], config: Dict, group_tag: str = "") -> str:
+def create_task(
+    name: str,
+    posts: List[Dict],
+    config: Dict,
+    group_tag: str = "",
+    account_id: str = "",
+) -> str:
     """Create a new comment supplement task."""
     task_id = f"task-{uuid.uuid4().hex[:8]}"
-    conn = sqlite3.connect(TASK_DB)
+    conn = _connect()
+    effective_account_id = str(account_id or config.get("account_id") or "").strip()
 
     conn.execute(
-        """INSERT INTO tasks (id, name, status, created_at, total_posts, config_json, group_tag)
-           VALUES (?, ?, 'pending', ?, ?, ?, ?)""",
-        (task_id, name, time.time(), len(posts), json.dumps(config, ensure_ascii=False), (group_tag or "")[:40])
+        """INSERT INTO tasks
+           (id, account_id, name, status, created_at, total_posts, config_json, group_tag)
+           VALUES (?, ?, ?, 'pending', ?, ?, ?, ?)""",
+        (
+            task_id,
+            effective_account_id,
+            name,
+            time.time(),
+            len(posts),
+            json.dumps(config, ensure_ascii=False),
+            (group_tag or "")[:40],
+        )
     )
 
     for post in posts:
@@ -125,8 +170,7 @@ def create_task(name: str, posts: List[Dict], config: Dict, group_tag: str = "")
 
 def get_task(task_id: str) -> Optional[Dict]:
     """Get task info by ID."""
-    conn = sqlite3.connect(TASK_DB)
-    conn.row_factory = sqlite3.Row
+    conn = _connect()
     cur = conn.cursor()
     cur.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
     row = cur.fetchone()
@@ -146,14 +190,25 @@ def get_task(task_id: str) -> Optional[Dict]:
     return task
 
 
-def list_tasks(archived: bool = False) -> List[Dict]:
+def list_tasks(archived: bool = False, account_id: str = "") -> List[Dict]:
     """List all tasks."""
-    conn = sqlite3.connect(TASK_DB)
-    conn.row_factory = sqlite3.Row
+    conn = _connect()
     cur = conn.cursor()
-    if archived:
+    if archived and account_id:
+        cur.execute(
+            "SELECT * FROM tasks WHERE archived_at IS NOT NULL AND account_id=? "
+            "ORDER BY archived_at DESC",
+            (account_id,),
+        )
+    elif archived:
         cur.execute(
             "SELECT * FROM tasks WHERE archived_at IS NOT NULL ORDER BY archived_at DESC"
+        )
+    elif account_id:
+        cur.execute(
+            "SELECT * FROM tasks WHERE archived_at IS NULL AND account_id=? "
+            "ORDER BY created_at DESC",
+            (account_id,),
         )
     else:
         cur.execute(
@@ -172,7 +227,7 @@ def list_tasks(archived: bool = False) -> List[Dict]:
 
 def set_task_archived(task_id: str, archived: bool) -> tuple[bool, str]:
     """Archive or restore a task."""
-    conn = sqlite3.connect(TASK_DB, timeout=10)
+    conn = _connect()
     try:
         conn.execute("BEGIN IMMEDIATE")
         row = conn.execute(
@@ -198,7 +253,7 @@ def update_post_status(task_id: str, note_id: str, status: str,
                        comment_count_after: int = 0, error: str = None,
                        comment_count_before: int = None):
     """Update a single post's status within a task."""
-    conn = sqlite3.connect(TASK_DB)
+    conn = _connect()
     if comment_count_before is None:
         conn.execute(
             """UPDATE task_posts SET status = ?, comment_count_after = ?,
@@ -244,7 +299,7 @@ def update_post_status(task_id: str, note_id: str, status: str,
 
 def complete_task(task_id: str):
     """Mark task as completed."""
-    conn = sqlite3.connect(TASK_DB)
+    conn = _connect()
     conn.execute(
         """UPDATE tasks SET status = 'completed', completed_at = ? WHERE id = ?""",
         (time.time(), task_id)
@@ -255,7 +310,7 @@ def complete_task(task_id: str):
 
 def start_task(task_id: str, log_path: str = None):
     """Mark a task as running."""
-    conn = sqlite3.connect(TASK_DB)
+    conn = _connect()
     conn.execute(
         """UPDATE tasks SET status = 'running', started_at = ?, log_path = ?,
            error_message = NULL WHERE id = ?""",
@@ -267,7 +322,7 @@ def start_task(task_id: str, log_path: str = None):
 
 def set_task_worker_pid(task_id: str, pid: int):
     """Persist the background worker pid so the dashboard can terminate it."""
-    conn = sqlite3.connect(TASK_DB, timeout=10)
+    conn = _connect()
     conn.execute(
         "UPDATE tasks SET worker_pid = ? WHERE id = ?",
         (pid, task_id),
@@ -278,7 +333,7 @@ def set_task_worker_pid(task_id: str, pid: int):
 
 def claim_task(task_id: str, retry_failed: bool = False) -> tuple[bool, str]:
     """Atomically reserve a pending task before launching its worker."""
-    conn = sqlite3.connect(TASK_DB, timeout=10)
+    conn = _connect()
     try:
         conn.execute("BEGIN IMMEDIATE")
         row = conn.execute(
@@ -301,7 +356,9 @@ def claim_task(task_id: str, retry_failed: bool = False) -> tuple[bool, str]:
             return False, "task has no pending posts"
         conn.execute(
             """UPDATE tasks SET status = 'starting', started_at = ?,
-               error_message = NULL, worker_pid = NULL WHERE id = ?""",
+               completed_at = NULL, error_message = NULL, exit_code = NULL,
+               worker_pid = NULL, stop_requested_at = NULL,
+               stop_source = NULL, stop_reason = NULL WHERE id = ?""",
             (time.time(), task_id),
         )
         conn.commit()
@@ -312,7 +369,7 @@ def claim_task(task_id: str, retry_failed: bool = False) -> tuple[bool, str]:
 
 def fail_task_start(task_id: str, error: str):
     """Return a claimed task to pending when its worker cannot be spawned."""
-    conn = sqlite3.connect(TASK_DB, timeout=10)
+    conn = _connect()
     conn.execute(
         """UPDATE tasks SET status = 'pending', error_message = ?
            WHERE id = ? AND status = 'starting'""",
@@ -324,7 +381,7 @@ def fail_task_start(task_id: str, error: str):
 
 def reset_failed_posts(task_id: str) -> tuple[bool, str]:
     """Move failed posts back to pending for manual rerun."""
-    conn = sqlite3.connect(TASK_DB, timeout=10)
+    conn = _connect()
     try:
         conn.execute("BEGIN IMMEDIATE")
         row = conn.execute(
@@ -350,7 +407,9 @@ def reset_failed_posts(task_id: str) -> tuple[bool, str]:
         )
         conn.execute(
             """UPDATE tasks SET status = 'pending', completed_at = NULL,
-               failed_posts = 0, error_message = NULL, worker_pid = NULL
+               failed_posts = 0, error_message = NULL, worker_pid = NULL,
+               exit_code = NULL, stop_requested_at = NULL,
+               stop_source = NULL, stop_reason = NULL
                WHERE id = ?""",
             (task_id,),
         )
@@ -362,7 +421,7 @@ def reset_failed_posts(task_id: str) -> tuple[bool, str]:
 
 def mark_task_cancelled(task_id: str, error: str = "cancelled by dashboard"):
     """Mark a running/starting task as manually cancelled."""
-    conn = sqlite3.connect(TASK_DB, timeout=10)
+    conn = _connect()
     conn.execute(
         """UPDATE task_posts SET status = 'failed', error_message = ?
            WHERE task_id = ? AND status = 'running'""",
@@ -382,19 +441,38 @@ def mark_task_cancelled(task_id: str, error: str = "cancelled by dashboard"):
         (task_id,),
     ).fetchone()[0]
     conn.execute(
-        """UPDATE tasks SET status = 'completed_with_errors',
+        """UPDATE tasks SET status = 'cancelled',
            completed_at = ?, error_message = ?, worker_pid = NULL,
-           completed_posts = ?, failed_posts = ?, total_comments_added = ?
+           completed_posts = ?, failed_posts = ?, total_comments_added = ?,
+           exit_code = 130, stop_requested_at = ?,
+           stop_source = 'dashboard_api', stop_reason = ?
            WHERE id = ? AND status IN ('starting', 'running')""",
-        (time.time(), error, completed, failed, comments_added, task_id),
+        (
+            time.time(), error, completed, failed, comments_added,
+            time.time(), error, task_id,
+        ),
     )
     conn.commit()
     conn.close()
 
 
-def finish_task(task_id: str):
+def finish_task(task_id: str, exit_code: Optional[int] = None):
     """Finish a task, retaining whether any posts failed."""
-    conn = sqlite3.connect(TASK_DB)
+    conn = _connect()
+    row = conn.execute(
+        "SELECT status FROM tasks WHERE id = ?", (task_id,)
+    ).fetchone()
+    if not row:
+        conn.close()
+        return
+    if row[0] == "cancelled":
+        conn.execute(
+            "UPDATE tasks SET worker_pid = NULL, exit_code = COALESCE(exit_code, ?) WHERE id = ?",
+            (exit_code, task_id),
+        )
+        conn.commit()
+        conn.close()
+        return
     counts = dict(conn.execute(
         "SELECT status, COUNT(*) FROM task_posts WHERE task_id = ? GROUP BY status",
         (task_id,),
@@ -407,8 +485,9 @@ def finish_task(task_id: str):
         status = 'completed'
     completed_at = None if status == 'pending' else time.time()
     conn.execute(
-        "UPDATE tasks SET status = ?, completed_at = ?, worker_pid = NULL WHERE id = ?",
-        (status, completed_at, task_id),
+        """UPDATE tasks SET status = ?, completed_at = ?, worker_pid = NULL,
+           exit_code = ? WHERE id = ?""",
+        (status, completed_at, exit_code, task_id),
     )
     conn.commit()
     conn.close()
@@ -416,8 +495,7 @@ def finish_task(task_id: str):
 
 def get_task_posts(task_id: str, status: str = None) -> List[Dict]:
     """Get posts for a task, optionally filtered by status."""
-    conn = sqlite3.connect(TASK_DB)
-    conn.row_factory = sqlite3.Row
+    conn = _connect()
     cur = conn.cursor()
 
     if status:

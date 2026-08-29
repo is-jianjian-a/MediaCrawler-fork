@@ -11,7 +11,9 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import threading
 import time
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
@@ -30,6 +32,13 @@ LAUNCH_WINDOW_SECONDS = int(os.getenv("MEDIACRAWLER_RISK_LAUNCH_WINDOW_SECONDS",
 MAX_LAUNCHES_PER_WINDOW = int(os.getenv("MEDIACRAWLER_RISK_MAX_LAUNCHES", "16"))
 REQUIRED_CLEAN_CANARIES = int(os.getenv("MEDIACRAWLER_RISK_CLEAN_CANARIES", "2"))
 RESERVATION_TTL_SECONDS = int(os.getenv("MEDIACRAWLER_RISK_RESERVATION_TTL_SECONDS", "300"))
+RUNNING_LEASE_TTL_SECONDS = int(
+    os.getenv("MEDIACRAWLER_RISK_RUNNING_LEASE_TTL_SECONDS", "180")
+)
+LEASE_HEARTBEAT_SECONDS = max(
+    5,
+    int(os.getenv("MEDIACRAWLER_RISK_LEASE_HEARTBEAT_SECONDS", "30")),
+)
 
 CANARY_MAX_POSTS = 5
 CANARY_MIN_DETAIL_SLEEP = 240
@@ -38,6 +47,7 @@ COMMENT_MAX_POSTS = 2
 COMMENT_MAX_COMMENTS = 5
 COMMENT_MIN_INTERVAL = 90
 MIN_SEARCH_SESSIONS_BETWEEN_COMMENTS = 2
+_INITIALIZED_DATABASES: set[str] = set()
 
 
 @dataclass(frozen=True)
@@ -54,8 +64,10 @@ class LaunchDecision:
 
 
 def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(RISK_DB, timeout=10)
+    conn = sqlite3.connect(RISK_DB, timeout=30)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=30000")
     return conn
 
 
@@ -75,6 +87,9 @@ def _next_local_midnight(ts: float) -> float:
 
 
 def init_risk_policy_db() -> None:
+    database_key = os.path.abspath(RISK_DB)
+    if database_key in _INITIALIZED_DATABASES:
+        return
     os.makedirs(os.path.dirname(RISK_DB), exist_ok=True)
     conn = _connect()
     conn.executescript(
@@ -243,6 +258,7 @@ def init_risk_policy_db() -> None:
         )
     conn.commit()
     conn.close()
+    _INITIALIZED_DATABASES.add(database_key)
 
 
 def _ensure_state(conn: sqlite3.Connection, account_key: str, now: float) -> sqlite3.Row:
@@ -428,8 +444,8 @@ def confirm_launch(task_id: str, user_data_dir: str, now: Optional[float] = None
     if row["active_task_id"] == task_id:
         conn.execute(
             """UPDATE xhs_risk_state SET last_task_started_at=?, last_browser_launch_at=?,
-               reservation_until=0, updated_at=? WHERE account_key=?""",
-            (now, now, now, account_key),
+               reservation_until=?, updated_at=? WHERE account_key=?""",
+            (now, now, now + RUNNING_LEASE_TTL_SECONDS, now, account_key),
         )
         conn.execute(
             """INSERT INTO xhs_risk_events
@@ -439,6 +455,68 @@ def confirm_launch(task_id: str, user_data_dir: str, now: Optional[float] = None
         )
     conn.commit()
     conn.close()
+
+
+def heartbeat_launch(
+    task_id: str,
+    user_data_dir: str,
+    now: Optional[float] = None,
+) -> bool:
+    """Extend a running lease only when ``task_id`` still owns the account."""
+    init_risk_policy_db()
+    now = time.time() if now is None else float(now)
+    account_key = _account_key(user_data_dir)
+    conn = _connect()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        row = _ensure_state(conn, account_key, now)
+        if row["active_task_id"] != task_id:
+            conn.rollback()
+            return False
+        conn.execute(
+            """UPDATE xhs_risk_state
+               SET reservation_until=?, updated_at=?
+               WHERE account_key=? AND active_task_id=?""",
+            (now + RUNNING_LEASE_TTL_SECONDS, now, account_key, task_id),
+        )
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
+@contextmanager
+def launch_lease_heartbeat(
+    task_id: str,
+    user_data_dir: str,
+    *,
+    interval_seconds: Optional[int] = None,
+):
+    """Keep a confirmed launch lease alive for one worker lifecycle."""
+    interval = max(5, int(interval_seconds or LEASE_HEARTBEAT_SECONDS))
+    stopped = threading.Event()
+
+    def _run() -> None:
+        while not stopped.wait(interval):
+            try:
+                if not heartbeat_launch(task_id, user_data_dir):
+                    return
+            except Exception:
+                # The OS profile lock remains the last line of defence.  A
+                # transient task-database lock must not kill a healthy crawl.
+                continue
+
+    thread = threading.Thread(
+        target=_run,
+        name=f"xhs-risk-heartbeat-{task_id}",
+        daemon=True,
+    )
+    thread.start()
+    try:
+        yield
+    finally:
+        stopped.set()
+        thread.join(timeout=min(5, interval))
 
 
 def abort_launch(task_id: str, user_data_dir: str, reason: str = "") -> None:
@@ -480,13 +558,48 @@ def record_completion(
     try:
         conn.execute("BEGIN IMMEDIATE")
         row = _ensure_state(conn, account_key, now)
+        already_recorded = conn.execute(
+            """SELECT 1 FROM xhs_risk_events
+               WHERE account_key=? AND task_id=?
+                 AND event_type IN ('task_succeeded', 'task_failed', 'task_cancelled', 'risk_control')
+               LIMIT 1""",
+            (account_key, task_id),
+        ).fetchone()
+        if already_recorded:
+            conn.rollback()
+            return get_status(user_data_dir, now=now)
+
+        current_owner = str(row["active_task_id"] or "")
+        owner_mismatch = bool(current_owner and current_owner != task_id)
+        if owner_mismatch and exit_code != 75:
+            conn.execute(
+                """INSERT INTO xhs_risk_events
+                   (account_key, task_id, task_kind, event_type, event_ts, detail_json)
+                   VALUES (?, ?, ?, 'completion_ignored_owner_mismatch', ?, ?)""",
+                (
+                    account_key,
+                    task_id,
+                    task_kind,
+                    now,
+                    json.dumps(
+                        {"exit_code": exit_code, "current_owner": current_owner},
+                        ensure_ascii=False,
+                    ),
+                ),
+            )
+            conn.commit()
+            return get_status(user_data_dir, now=now)
         state = _effective_state(row, now)
         clean = int(row["clean_canaries"])
         cooldown_until = float(row["cooldown_until"])
         locked_until = float(row["locked_until"])
         risk_day = row["risk_day"]
         risk_count = int(row["risk_count_day"])
-        event_type = "task_succeeded" if exit_code == 0 else "task_failed"
+        event_type = (
+            "task_succeeded"
+            if exit_code == 0
+            else ("task_cancelled" if exit_code == 130 else "task_failed")
+        )
 
         if exit_code == 75:
             today = _local_day(now)
@@ -509,15 +622,20 @@ def record_completion(
         else:
             state = _effective_state(row, now)
 
+        release_owner = current_owner in ("", task_id)
+        next_active_task_id = "" if release_owner else current_owner
+        next_active_task_kind = "" if release_owner else str(row["active_task_kind"] or "")
+        next_reservation_until = 0 if release_owner else float(row["reservation_until"])
         conn.execute(
             """UPDATE xhs_risk_state
                SET state=?, clean_canaries=?, cooldown_until=?, locked_until=?,
                    last_task_completed_at=?, last_risk_at=?, risk_day=?, risk_count_day=?,
-                   active_task_id='', active_task_kind='', reservation_until=0, updated_at=?
+                   active_task_id=?, active_task_kind=?, reservation_until=?, updated_at=?
                WHERE account_key=?""",
             (
                 state, clean, cooldown_until, locked_until, now,
                 now if exit_code == 75 else row["last_risk_at"], risk_day, risk_count,
+                next_active_task_id, next_active_task_kind, next_reservation_until,
                 now, account_key,
             ),
         )
@@ -570,6 +688,7 @@ def get_status(user_data_dir: str = "%s_user_data_dir_account02", now: Optional[
         "risk_count_day": int(row["risk_count_day"]),
         "active_task_id": row["active_task_id"],
         "active_task_kind": row["active_task_kind"],
+        "lease_expires_at": float(row["reservation_until"]),
         "launches_12h": int(launches),
         "max_launches_12h": MAX_LAUNCHES_PER_WINDOW,
         "launch_budget_retry_at": launch_budget_retry_at,

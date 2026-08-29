@@ -19,6 +19,7 @@
 
 
 import os
+import re
 
 # mysql config
 MYSQL_DB_PWD = os.getenv("MYSQL_DB_PWD", "123456")
@@ -54,12 +55,22 @@ def get_current_account() -> str:
     """返回当前抓取账号标识，用于写入 crawler_account 字段。"""
     return _DEFAULT_ACCOUNT or "default"
 
-# 有效账号列表（--account 参数校验用）
-# 数据已合并至主库，所有账号共享 sqlite_tables.db，通过 crawler_account 字段区分
+# 兼容旧调用；Dashboard 注册表支持任意安全账号 ID，不再需要改代码扩表。
 _VALID_ACCOUNTS = {"01", "02", "03"}
+_ACCOUNT_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$")
 
-# 当前生效的数据库路径（固定主库）
-SQLITE_DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "database", "sqlite_tables.db")
+
+def is_valid_account_id(account_id: str) -> bool:
+    return bool(_ACCOUNT_ID_PATTERN.fullmatch(str(account_id or "").strip()))
+
+# Dashboard 多账号任务通过环境变量把每个账号路由到独立 SQLite 文件。
+# 未设置时继续使用历史主库，保持 CLI 和已有数据兼容。
+_DEFAULT_SQLITE_DB_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(__file__)), "database", "sqlite_tables.db"
+)
+SQLITE_DB_PATH = os.path.abspath(
+    os.path.expanduser(os.getenv("MEDIACRAWLER_SQLITE_DB_PATH", _DEFAULT_SQLITE_DB_PATH))
+)
 
 sqlite_db_config = {
     "db_path": SQLITE_DB_PATH

@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 
+import os
 import sys
 import re
 from enum import Enum
@@ -31,7 +32,7 @@ import typer
 from typing_extensions import Annotated
 
 import config
-from config.db_config import _VALID_ACCOUNTS
+from config.db_config import is_valid_account_id
 from tools.utils import str2bool
 
 
@@ -346,7 +347,7 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
             Optional[str],
             typer.Option(
                 "--account",
-                help="Account number to use (02 | 03). Switches DB path and browser data dir automatically.",
+                help="Account ID to use. Browser and database routing may also be supplied by environment variables.",
                 rich_help_panel="Account Configuration",
             ),
         ] = None,
@@ -360,8 +361,9 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
         init_db_value = init_db.value if init_db else None
 
         # Switch account: set browser data dir and crawler_account source
-        if account and account in _VALID_ACCOUNTS:
-            config.USER_DATA_DIR = f"%s_user_data_dir_account{account}"
+        if account and is_valid_account_id(account):
+            if not os.getenv("MEDIACRAWLER_USER_DATA_DIR"):
+                config.USER_DATA_DIR = f"%s_user_data_dir_account{account}"
             # 同步账号标识到 db_config，供存储层写入 crawler_account
             from config import db_config as _db_config
             _db_config._DEFAULT_ACCOUNT = account
@@ -370,9 +372,8 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
                 fg=typer.colors.CYAN,
             )
         elif account:
-            known = ", ".join(sorted(_VALID_ACCOUNTS))
             typer.secho(
-                f"⚠️ Unknown account '{account}'. Known: {known}. Using default config.",
+                f"⚠️ Invalid account ID '{account}'. Using default config.",
                 fg=typer.colors.YELLOW,
             )
 

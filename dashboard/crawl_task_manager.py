@@ -16,8 +16,10 @@ TASK_DB = os.path.join(DASHBOARD_DIR, "database", "task_manager.db")
 
 
 def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(TASK_DB, timeout=10)
+    conn = sqlite3.connect(TASK_DB, timeout=30)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=30000")
     return conn
 
 
@@ -28,6 +30,7 @@ def init_crawl_task_db() -> None:
         """
         CREATE TABLE IF NOT EXISTS crawl_tasks (
             id TEXT PRIMARY KEY,
+            account_id TEXT,
             name TEXT NOT NULL,
             status TEXT DEFAULT 'pending',
             created_at REAL NOT NULL,
@@ -48,6 +51,7 @@ def init_crawl_task_db() -> None:
     )
     existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(crawl_tasks)").fetchall()}
     for col, ddl in {
+        "account_id": "ALTER TABLE crawl_tasks ADD COLUMN account_id TEXT",
         "worker_pid": "ALTER TABLE crawl_tasks ADD COLUMN worker_pid INTEGER",
         "archived_at": "ALTER TABLE crawl_tasks ADD COLUMN archived_at REAL",
         "error_message": "ALTER TABLE crawl_tasks ADD COLUMN error_message TEXT",
@@ -58,6 +62,10 @@ def init_crawl_task_db() -> None:
     }.items():
         if col not in existing_cols:
             conn.execute(ddl)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_crawl_tasks_account_status "
+        "ON crawl_tasks(account_id, status)"
+    )
     # Older versions stored every interrupted task as ``failed`` with exit 130.
     # Preserve the honest boundary: it was actively interrupted, but the old
     # schema did not retain who requested the stop.
@@ -74,16 +82,24 @@ def init_crawl_task_db() -> None:
     conn.close()
 
 
-def create_crawl_task(name: str, keywords: List[str], config: Dict) -> str:
+def create_crawl_task(
+    name: str,
+    keywords: List[str],
+    config: Dict,
+    account_id: str = "",
+) -> str:
     task_id = f"crawl-{uuid.uuid4().hex[:8]}"
+    effective_account_id = str(account_id or config.get("account_id") or "").strip()
     conn = _connect()
     conn.execute(
         """
-        INSERT INTO crawl_tasks (id, name, status, created_at, keywords_json, config_json)
-        VALUES (?, ?, 'pending', ?, ?, ?)
+        INSERT INTO crawl_tasks
+        (id, account_id, name, status, created_at, keywords_json, config_json)
+        VALUES (?, ?, ?, 'pending', ?, ?, ?)
         """,
         (
             task_id,
+            effective_account_id,
             name,
             time.time(),
             json.dumps(keywords, ensure_ascii=False),
@@ -112,11 +128,26 @@ def get_crawl_task(task_id: str) -> Optional[Dict]:
     return _row_to_task(row) if row else None
 
 
-def list_crawl_tasks(archived: bool = False) -> List[Dict]:
+def list_crawl_tasks(
+    archived: bool = False,
+    account_id: str = "",
+) -> List[Dict]:
     conn = _connect()
-    if archived:
+    if archived and account_id:
+        rows = conn.execute(
+            "SELECT * FROM crawl_tasks WHERE archived_at IS NOT NULL AND account_id=? "
+            "ORDER BY archived_at DESC",
+            (account_id,),
+        ).fetchall()
+    elif archived:
         rows = conn.execute(
             "SELECT * FROM crawl_tasks WHERE archived_at IS NOT NULL ORDER BY archived_at DESC"
+        ).fetchall()
+    elif account_id:
+        rows = conn.execute(
+            "SELECT * FROM crawl_tasks WHERE archived_at IS NULL AND account_id=? "
+            "ORDER BY created_at DESC",
+            (account_id,),
         ).fetchall()
     else:
         rows = conn.execute(

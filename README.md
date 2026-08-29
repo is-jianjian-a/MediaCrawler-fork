@@ -135,7 +135,7 @@ uv run playwright install
 >
 > 如果不想使用 CDP 模式，可以在 `config/base_config.py` 中设置 `ENABLE_CDP_MODE = False` 切换为标准 Playwright 模式。
 
-> **Dashboard 小红书自动任务例外**：长期无人值守任务固定使用隔离的 Playwright Chromium，不连接日用 Chrome 或 9222。CDP 便于复用会话，但现有证据不足以证明它能降低小红书风控；账号级冷却、探针恢复与日熔断规则见 [小红书抓取速率基线与风控处置](docs/xhs_crawl_rate_policy.md)。
+> **Dashboard 小红书自动任务例外**：长期无人值守任务固定使用隔离的 Playwright Chromium，不连接日用 Chrome 或 9222。CDP 便于复用会话，但现有证据不足以证明它能降低小红书风控；账号级冷却、探针恢复与日熔断规则见 [小红书抓取速率基线与风控处置](docs/xhs_crawl_rate_policy.md)，多账号并行的注册、隔离和迁移规则见 [小红书多账号隔离并行运行](docs/xhs_multi_account_isolation.md)。
 
 ## 🚀 运行爬虫程序
 

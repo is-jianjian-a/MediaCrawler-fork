@@ -109,6 +109,11 @@ async def main() -> None:
         logger.info(f'Database {args.init_db} initialized successfully.')
         return
 
+    # Account-isolated Dashboard workers may point at a brand-new SQLite file.
+    # Schema creation is idempotent and also enables WAL/busy_timeout.
+    if config.SAVE_DATA_OPTION == "sqlite":
+        await db.init_db("sqlite")
+
     crawler = CrawlerFactory.create_crawler(platform=config.PLATFORM)
     await crawler.start()
 

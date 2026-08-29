@@ -21,7 +21,7 @@ import urllib.request
 import asyncio
 from pathlib import Path
 
-from flask import Flask, jsonify, request
+from flask import Flask, has_request_context, jsonify, request
 
 from db import (
     get_crawler_db_path, get_config_values, get_crawler_stats,
@@ -31,11 +31,34 @@ from groups import list_groups, save_group, activate_group, delete_group, rename
 from task_manager import init_task_db
 from crawl_task_manager import init_crawl_task_db
 try:
+    from dashboard.account_registry import (
+        AccountRegistryError,
+        DEFAULT_ACCOUNT_ID,
+        DEFAULT_USER_DATA_DIR,
+        account_db_path,
+        bind_task_config,
+        get_account,
+        init_account_registry_db,
+        list_accounts,
+    )
+except ModuleNotFoundError:  # Support `python dashboard/server.py`.
+    from account_registry import (  # type: ignore[no-redef]
+        AccountRegistryError,
+        DEFAULT_ACCOUNT_ID,
+        DEFAULT_USER_DATA_DIR,
+        account_db_path,
+        bind_task_config,
+        get_account,
+        init_account_registry_db,
+        list_accounts,
+    )
+try:
     from dashboard.risk_policy import (
         abort_launch,
         confirm_launch,
         get_status as get_risk_policy_status,
         init_risk_policy_db,
+        record_completion,
         reserve_launch,
     )
 except ModuleNotFoundError:  # Support `python dashboard/server.py`.
@@ -44,6 +67,7 @@ except ModuleNotFoundError:  # Support `python dashboard/server.py`.
         confirm_launch,
         get_status as get_risk_policy_status,
         init_risk_policy_db,
+        record_completion,
         reserve_launch,
     )
 from worth_scoring import score_post
@@ -72,7 +96,7 @@ except ModuleNotFoundError:  # Support `python dashboard/server.py`.
 
 # --- config ---
 PORT = 18998
-HOST = "0.0.0.0"
+HOST = os.getenv("MEDIACRAWLER_DASHBOARD_HOST", "127.0.0.1")
 MEDIACRAWLER_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOG_PATH = os.path.join(MEDIACRAWLER_ROOT, "logs", "crawler.log")
 
@@ -83,6 +107,9 @@ STATIC_DIR = os.path.join(DASHBOARD_DIR, "static")
 SNAPSHOT_INTERVAL = 30
 RISK_SCHEDULER_INTERVAL = int(os.getenv("MEDIACRAWLER_RISK_SCHEDULER_INTERVAL", "30"))
 RISK_SCHEDULER_ENABLED = os.getenv("MEDIACRAWLER_RISK_SCHEDULER_ENABLED", "true").lower() in ("1", "true", "yes")
+MAX_PARALLEL_XHS_ACCOUNTS = max(
+    1, int(os.getenv("MEDIACRAWLER_MAX_PARALLEL_XHS_ACCOUNTS", "4"))
+)
 MAX_DB_SIZE_MB = 100
 MAX_HISTORY_HOURS = 72
 MIN_COMMENT_TASK_BATCH_SIZE = int(os.getenv("MEDIACRAWLER_MIN_COMMENT_TASK_BATCH_SIZE", "5"))
@@ -93,6 +120,7 @@ logger = logging.getLogger("dashboard")
 app = Flask(__name__, static_folder=STATIC_DIR, static_url_path="/static")
 init_task_db()
 init_crawl_task_db()
+init_account_registry_db()
 init_risk_policy_db()
 
 
@@ -327,33 +355,46 @@ except FileNotFoundError as e:
     logger.warning(f"No crawler DB found: {e}")
 
 
-def _with_crawler_db():
-    """Context manager — yields a connection to the crawler DB, or None."""
-    if not _crawler_db_path or not os.path.exists(_crawler_db_path):
+def _with_crawler_db(account_id: str = ""):
+    """Return an account-routed content DB connection, or None when absent."""
+    selected_account = str(account_id or "").strip()
+    if not selected_account and has_request_context():
+        selected_account = str(request.args.get("account_id", "") or "").strip()
+    if not selected_account:
+        # Backward-compatible default route.  It also keeps read-only tests and
+        # local tools that patch the legacy DB pointer working unchanged.
+        db_path = _crawler_db_path
+    else:
+        try:
+            db_path = account_db_path(selected_account)
+        except AccountRegistryError:
+            return None
+    if not db_path or not os.path.exists(db_path):
         return None
-    return _connect(_crawler_db_path)
+    return _connect(db_path)
 
 
 def ensure_crawler_db_indexes():
     """Create lightweight indexes needed by dashboard read queries."""
-    conn = _with_crawler_db()
-    if not conn:
-        return
-    try:
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_xhs_note_comment_note_id ON xhs_note_comment(note_id)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_xhs_note_source_keyword ON xhs_note(source_keyword)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_xhs_note_add_ts ON xhs_note(add_ts)")
-        has_keyword_hits = conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='xhs_note_keyword_hit'"
-        ).fetchone()
-        if has_keyword_hits:
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_xhs_note_keyword_hit_keyword_note "
-                "ON xhs_note_keyword_hit(keyword, note_id)"
-            )
-        conn.commit()
-    finally:
-        conn.close()
+    for account in list_accounts():
+        conn = _with_crawler_db(account["account_id"])
+        if not conn:
+            continue
+        try:
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_xhs_note_comment_note_id ON xhs_note_comment(note_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_xhs_note_source_keyword ON xhs_note(source_keyword)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_xhs_note_add_ts ON xhs_note(add_ts)")
+            has_keyword_hits = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='xhs_note_keyword_hit'"
+            ).fetchone()
+            if has_keyword_hits:
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_xhs_note_keyword_hit_keyword_note "
+                    "ON xhs_note_keyword_hit(keyword, note_id)"
+                )
+            conn.commit()
+        finally:
+            conn.close()
 
 
 # --- process info ---
@@ -1101,7 +1142,27 @@ def api_quality():
 def api_list_tasks():
     from task_manager import list_tasks
     archived = request.args.get("archived") in ("1", "true", "yes")
-    return jsonify(list_tasks(archived=archived))
+    account_id = str(request.args.get("account_id", "") or "").strip()
+    return jsonify(list_tasks(archived=archived, account_id=account_id))
+
+
+@app.route("/api/xhs-accounts")
+def api_list_xhs_accounts():
+    """Expose only non-sensitive routing state to the loopback Dashboard."""
+    accounts = []
+    for account in list_accounts(include_disabled=True):
+        accounts.append(
+            {
+                "account_id": account["account_id"],
+                "display_name": account["display_name"],
+                "enabled": account["enabled"],
+                "storage_mode": account["storage_mode"],
+                "profile_exists": account["profile_exists"],
+                "content_db_exists": account["content_db_exists"],
+                "risk_policy": get_risk_policy_status(account["user_data_dir"]),
+            }
+        )
+    return jsonify({"accounts": accounts, "default_account_id": DEFAULT_ACCOUNT_ID})
 
 
 @app.route("/api/tasks/<task_id>")
@@ -1119,7 +1180,12 @@ def api_create_task():
     data = request.get_json(force=True)
     name = data.get("name", "")
     posts = data.get("posts", [])
-    config = data.get("config", {})
+    raw_config = data.get("config", {}) or {}
+    selected_account_id = str(
+        data.get("account_id")
+        or raw_config.get("account_id")
+        or DEFAULT_ACCOUNT_ID
+    ).strip()
     group_tag = (data.get("group_tag") or "").strip()[:40]
     if not name or not isinstance(posts, list) or not posts:
         return jsonify({"error": "name and posts required"}), 400
@@ -1137,44 +1203,142 @@ def api_create_task():
     if len(posts) > 2:
         return jsonify({"error": "risk policy allows at most 2 posts per comment task"}), 400
     try:
-        browser_mode = str(config.get("browser_mode", "standard") or "standard")
+        browser_mode = str(raw_config.get("browser_mode", "standard") or "standard")
         if browser_mode not in ("standard", "cdp_optional", "cdp_required"):
             browser_mode = "standard"
-        user_data_dir = str(config.get("user_data_dir", "%s_user_data_dir_account02") or "%s_user_data_dir_account02").strip()
-        if not user_data_dir:
-            user_data_dir = "%s_user_data_dir_account02"
-        min_sleep = max(0, min(int(config.get("min_sleep", COMMENTS_RATE.min_sleep)), 300))
-        max_sleep = max(0, min(int(config.get("max_sleep", COMMENTS_RATE.max_sleep)), 600))
+        min_sleep = max(0, min(int(raw_config.get("min_sleep", COMMENTS_RATE.min_sleep)), 300))
+        max_sleep = max(0, min(int(raw_config.get("max_sleep", COMMENTS_RATE.max_sleep)), 600))
         if max_sleep < min_sleep:
             raise ValueError("max_sleep must not be lower than min_sleep")
         config = {
-            "batch_size": max(1, min(int(config.get("batch_size", DEFAULT_COMMENT_TASK_BATCH_SIZE)), 20)),
-            "max_comments": max(1, min(int(config.get("max_comments", DEFAULT_FIRST_LEVEL_COMMENTS)), 5)),
-            "max_sub_comments": max(0, min(int(config.get("max_sub_comments", 200)), 1000)),
-            "get_sub_comments": config.get("get_sub_comments", False) is True,
-            "delay": max(0, min(float(config.get("delay", DEFAULT_COMMENT_TASK_BATCH_DELAY)), 120)),
+            "batch_size": max(1, min(int(raw_config.get("batch_size", DEFAULT_COMMENT_TASK_BATCH_SIZE)), 20)),
+            "max_comments": max(1, min(int(raw_config.get("max_comments", DEFAULT_FIRST_LEVEL_COMMENTS)), 5)),
+            "max_sub_comments": max(0, min(int(raw_config.get("max_sub_comments", 200)), 1000)),
+            "get_sub_comments": raw_config.get("get_sub_comments", False) is True,
+            "delay": max(0, min(float(raw_config.get("delay", DEFAULT_COMMENT_TASK_BATCH_DELAY)), 120)),
             "min_sleep": min_sleep,
             "max_sleep": max_sleep,
-            "comment_sleep": max(90, min(int(config.get("comment_sleep", COMMENTS_RATE.comment_sleep)), 120)),
+            "comment_sleep": max(90, min(int(raw_config.get("comment_sleep", COMMENTS_RATE.comment_sleep)), 120)),
             "max_concurrency": 1,
-            "limit": max(0, min(int(config.get("limit", 0) or 0), 100)),
-            "dry_run": config.get("dry_run", False) is True,
+            "limit": max(0, min(int(raw_config.get("limit", 0) or 0), 100)),
+            "dry_run": raw_config.get("dry_run", False) is True,
             "headless": True,
-            "user_data_dir": user_data_dir,
             "browser_mode": browser_mode,
             "enable_cdp": False,
             "require_cdp": False,
-            "cdp_debug_port": max(1, min(int(config.get("cdp_debug_port", 9222) or 9222), 65535)),
-            "browser_path": str(config.get("browser_path", "") or "").strip(),
+            "cdp_debug_port": max(1, min(int(raw_config.get("cdp_debug_port", 9222) or 9222), 65535)),
             "publish_date_after": validate_comment_publish_date_after(
-                config.get("publish_date_after", DEFAULT_COMMENT_PUBLISH_DATE_AFTER)
+                raw_config.get("publish_date_after", DEFAULT_COMMENT_PUBLISH_DATE_AFTER)
             ),
-            "start_mode": "auto" if config.get("start_mode") == "auto" else "manual",
+            "start_mode": "auto" if raw_config.get("start_mode") == "auto" else "manual",
         }
-    except (TypeError, ValueError):
-        return jsonify({"error": "invalid task config"}), 400
-    task_id = create_task(name, posts, config, group_tag=group_tag)
+        config, account = bind_task_config(config, account_id=selected_account_id)
+        account_conn = _with_crawler_db(account["account_id"])
+        if not account_conn:
+            return jsonify({"error": "account content database is not initialized"}), 409
+        try:
+            placeholders = ",".join("?" for _ in posts)
+            note_columns = {
+                row[1]
+                for row in account_conn.execute("PRAGMA table_info(xhs_note)").fetchall()
+            }
+            account_clause = " AND crawler_account=?" if "crawler_account" in note_columns else ""
+            query_params = [post["note_id"] for post in posts]
+            if account_clause:
+                query_params.append(account["account_id"])
+            existing_note_ids = {
+                row[0]
+                for row in account_conn.execute(
+                    f"SELECT note_id FROM xhs_note WHERE note_id IN ({placeholders}){account_clause}",
+                    query_params,
+                ).fetchall()
+            }
+        finally:
+            account_conn.close()
+        missing = [
+            post["note_id"]
+            for post in posts
+            if post["note_id"] not in existing_note_ids
+        ]
+        if missing:
+            return jsonify(
+                {
+                    "error": "posts do not belong to selected account",
+                    "missing_note_ids": missing,
+                }
+            ), 400
+    except (AccountRegistryError, TypeError, ValueError) as exc:
+        return jsonify({"error": f"invalid task config: {exc}"}), 400
+    task_id = create_task(
+        name,
+        posts,
+        config,
+        group_tag=group_tag,
+        account_id=account["account_id"],
+    )
     return jsonify({"id": task_id, "ok": True})
+
+
+def _runtime_account_config(task: dict, config: dict) -> tuple[dict, dict]:
+    account_id = str(
+        task.get("account_id") or config.get("account_id") or DEFAULT_ACCOUNT_ID
+    ).strip()
+    return bind_task_config(config, account_id=account_id, require_enabled=True)
+
+
+def _account_worker_log_path(account_id: str, task_id: str) -> str:
+    log_dir = Path(DASHBOARD_DIR) / "logs" / "accounts" / account_id
+    log_dir.mkdir(parents=True, exist_ok=True)
+    return str(log_dir / f"{task_id}-worker.log")
+
+
+def _record_task_cancellation(task: dict, task_kind: str) -> None:
+    """Release only this task's account lease after an explicit cancellation."""
+    config = _auto_task_config(task)
+    try:
+        runtime_config, _ = bind_task_config(
+            config,
+            account_id=_auto_task_account_id(task),
+            require_enabled=False,
+        )
+        record_completion(
+            task_id=task["id"],
+            task_kind=task_kind,
+            user_data_dir=runtime_config["user_data_dir"],
+            exit_code=130,
+        )
+    except Exception:
+        logger.exception(
+            "failed to record cancelled %s task lease: %s",
+            task_kind,
+            task.get("id"),
+        )
+
+
+def _account_has_active_task(account_id: str, *, exclude_task_id: str = "") -> bool:
+    from crawl_task_manager import list_crawl_tasks
+    from task_manager import list_tasks
+
+    active_statuses = {"starting", "running", "stopping"}
+    selected = get_account(account_id)
+    if not selected:
+        return True
+    candidates = list_crawl_tasks() + list_tasks()
+    for task in candidates:
+        if task.get("id") == exclude_task_id or task.get("status") not in active_statuses:
+            continue
+        active_account_id = _auto_task_account_id(task)
+        if active_account_id == account_id:
+            return True
+        active_account = get_account(active_account_id)
+        if not active_account:
+            continue
+        if (
+            active_account["profile_path"] == selected["profile_path"]
+            or active_account["sqlite_db_path"] == selected["sqlite_db_path"]
+        ):
+            return True
+    return False
 
 
 def _launch_comment_task(task_id, retry_failed=False):
@@ -1187,6 +1351,12 @@ def _launch_comment_task(task_id, retry_failed=False):
         task_config = json.loads(task.get("config_json") or "{}")
     except (TypeError, json.JSONDecodeError):
         task_config = {}
+    try:
+        task_config, account = _runtime_account_config(task, task_config)
+    except AccountRegistryError as exc:
+        return jsonify({"error": str(exc)}), 409
+    if _account_has_active_task(account["account_id"], exclude_task_id=task_id):
+        return jsonify({"error": "selected account already has an active task"}), 409
     dry_run = bool(task_config.get("dry_run"))
     if not dry_run:
         decision = reserve_launch(
@@ -1233,7 +1403,9 @@ def _launch_comment_task(task_id, retry_failed=False):
         "--max-sleep", str(task_config.get("max_sleep", COMMENTS_RATE.max_sleep)),
         "--comment-sleep", str(task_config.get("comment_sleep", COMMENTS_RATE.comment_sleep)),
         "--max-concurrency", "1",
-        "--user-data-dir", str(task_config.get("user_data_dir", "%s_user_data_dir_account02")),
+        "--account-id", account["account_id"],
+        "--db-path", account["sqlite_db_path"],
+        "--user-data-dir", account["user_data_dir"],
         "--publish-date-after", publish_date_after,
     ]
     if int(task_config.get("limit", 0) or 0) > 0:
@@ -1267,10 +1439,17 @@ def _launch_comment_task(task_id, retry_failed=False):
         worker_env["MEDIACRAWLER_ENABLE_CDP"] = "true" if enable_cdp else "false"
         worker_env["MEDIACRAWLER_REQUIRE_CDP"] = "true" if require_cdp else "false"
         worker_env["MEDIACRAWLER_CDP_DEBUG_PORT"] = str(task_config.get("cdp_debug_port", 9222))
-        worker_env["MEDIACRAWLER_AUTO_CLOSE_BROWSER"] = "false"
+        worker_env["MEDIACRAWLER_AUTO_CLOSE_BROWSER"] = "true"
         worker_env["MEDIACRAWLER_CDP_CONNECT_EXISTING"] = "false"
         worker_env.pop("MEDIACRAWLER_CDP_ENDPOINT", None)
         worker_env["MEDIACRAWLER_XHS_NOTE_PUBLISH_DATE_AFTER"] = publish_date_after
+        worker_env["MEDIACRAWLER_ACCOUNT"] = account["account_id"]
+        worker_env["MEDIACRAWLER_SQLITE_DB_PATH"] = account["sqlite_db_path"]
+        worker_env["MEDIACRAWLER_USER_DATA_DIR"] = account["user_data_dir"]
+        worker_env["MEDIACRAWLER_TASK_ID"] = task_id
+        worker_env["MEDIACRAWLER_LOG_PATH"] = _account_worker_log_path(
+            account["account_id"], task_id
+        )
         worker = subprocess.Popen(
             command,
             cwd=MEDIACRAWLER_ROOT,
@@ -1281,7 +1460,7 @@ def _launch_comment_task(task_id, retry_failed=False):
         )
         set_task_worker_pid(task_id, worker.pid)
         if not dry_run:
-            confirm_launch(task_id, task_config.get("user_data_dir", ""))
+            confirm_launch(task_id, account["user_data_dir"])
     except Exception as exc:
         fail_task_start(task_id, str(exc))
         if not dry_run:
@@ -1370,6 +1549,7 @@ def api_cancel_task(task_id):
             kill_errors.append(f"{candidate_pid}: {exc}")
 
     mark_task_cancelled(task_id)
+    _record_task_cancellation(task, "comment")
     return jsonify({"ok": True, "killed": killed, "errors": kill_errors})
 
 
@@ -1548,7 +1728,8 @@ def api_crawl_keyword_presets():
 def api_list_crawl_tasks():
     from crawl_task_manager import list_crawl_tasks
     archived = request.args.get("archived") in ("1", "true", "yes")
-    return jsonify(list_crawl_tasks(archived=archived))
+    account_id = str(request.args.get("account_id", "") or "").strip()
+    return jsonify(list_crawl_tasks(archived=archived, account_id=account_id))
 
 
 def _pid_alive(pid) -> bool:
@@ -1834,6 +2015,7 @@ def _crawl_task_summary(task: dict | None) -> dict | None:
     runtime_seconds = max(0, int(time.time() - started_at)) if started_at else 0
     summary = {
         "id": task.get("id"),
+        "account_id": task.get("account_id") or config.get("account_id") or DEFAULT_ACCOUNT_ID,
         "name": task.get("name"),
         "status": task.get("status"),
         "created_at": task.get("created_at"),
@@ -1863,7 +2045,7 @@ def _crawl_task_summary(task: dict | None) -> dict | None:
         },
     }
 
-    conn = _with_crawler_db()
+    conn = _with_crawler_db(summary["account_id"])
     if not conn:
         return summary
     try:
@@ -1886,12 +2068,23 @@ def api_active_crawl_task_summary():
     from crawl_task_manager import list_crawl_tasks
 
     tasks = list_crawl_tasks(archived=False)
-    active = next((t for t in tasks if t.get("status") in ("starting", "running", "stopping")), None)
+    active_tasks = [
+        task for task in tasks
+        if task.get("status") in ("starting", "running", "stopping")
+    ]
+    active = active_tasks[0] if active_tasks else None
     recent = tasks[0] if tasks else None
+    risk_policies = {}
+    for account in list_accounts(include_disabled=True):
+        status = get_risk_policy_status(account["user_data_dir"])
+        status["account_id"] = account["account_id"]
+        risk_policies[account["account_id"]] = status
     return jsonify({
         "active_task": _crawl_task_summary(active),
+        "active_tasks": [_crawl_task_summary(task) for task in active_tasks],
         "recent_task": _crawl_task_summary(recent) if not active and recent else None,
-        "risk_policy": get_risk_policy_status(),
+        "risk_policy": risk_policies.get(DEFAULT_ACCOUNT_ID, get_risk_policy_status()),
+        "risk_policies": risk_policies,
         "ts": time.time(),
     })
 
@@ -1916,10 +2109,22 @@ def api_create_crawl_task():
     if len(keywords) > 80:
         return jsonify({"error": "a task may contain at most 80 keywords"}), 400
     try:
-        config = _normalize_crawl_config(data.get("config", {}))
-    except (TypeError, ValueError):
-        return jsonify({"error": "invalid crawl task config"}), 400
-    task_id = create_crawl_task(name, keywords, config)
+        raw_config = data.get("config", {}) or {}
+        selected_account_id = str(
+            data.get("account_id")
+            or raw_config.get("account_id")
+            or DEFAULT_ACCOUNT_ID
+        ).strip()
+        config = _normalize_crawl_config(raw_config)
+        config, account = bind_task_config(config, account_id=selected_account_id)
+    except (AccountRegistryError, TypeError, ValueError) as exc:
+        return jsonify({"error": f"invalid crawl task config: {exc}"}), 400
+    task_id = create_crawl_task(
+        name,
+        keywords,
+        config,
+        account_id=account["account_id"],
+    )
     return jsonify({"ok": True, "id": task_id})
 
 
@@ -1930,6 +2135,12 @@ def _launch_crawl_task(task_id):
     if not task:
         return jsonify({"error": "task not found"}), 404
     task_config = task.get("config") or {}
+    try:
+        task_config, account = _runtime_account_config(task, task_config)
+    except AccountRegistryError as exc:
+        return jsonify({"error": str(exc)}), 409
+    if _account_has_active_task(account["account_id"], exclude_task_id=task_id):
+        return jsonify({"error": "selected account already has an active task"}), 409
     dry_run = bool(task_config.get("dry_run"))
     if not dry_run:
         decision = reserve_launch(
@@ -1950,6 +2161,14 @@ def _launch_crawl_task(task_id):
     enable_cdp = bool(task_config.get("enable_cdp"))
     require_cdp = bool(task_config.get("require_cdp"))
     worker_env = os.environ.copy()
+    worker_env["MEDIACRAWLER_ACCOUNT"] = account["account_id"]
+    worker_env["MEDIACRAWLER_SQLITE_DB_PATH"] = account["sqlite_db_path"]
+    worker_env["MEDIACRAWLER_USER_DATA_DIR"] = account["user_data_dir"]
+    worker_env["MEDIACRAWLER_BROWSER_PATH"] = account["browser_path"]
+    worker_env["MEDIACRAWLER_TASK_ID"] = task_id
+    worker_env["MEDIACRAWLER_LOG_PATH"] = _account_worker_log_path(
+        account["account_id"], task_id
+    )
     if not dry_run and decision.canary:
         worker_env["MEDIACRAWLER_RISK_CANARY"] = "true"
     if enable_cdp:
@@ -1987,7 +2206,7 @@ def _launch_crawl_task(task_id):
         )
         set_crawl_worker_pid(task_id, worker.pid)
         if not dry_run:
-            confirm_launch(task_id, task_config.get("user_data_dir", ""))
+            confirm_launch(task_id, account["user_data_dir"])
     except Exception as exc:
         fail_crawl_task_start(task_id, str(exc))
         if not dry_run:
@@ -2003,7 +2222,18 @@ def api_start_crawl_task(task_id):
 
 @app.route("/api/risk-policy/status")
 def api_risk_policy_status():
-    user_data_dir = request.args.get("user_data_dir", "%s_user_data_dir_account02")
+    account_id = str(request.args.get("account_id", "") or "").strip()
+    if account_id:
+        try:
+            account = get_account(account_id)
+        except AccountRegistryError as exc:
+            return jsonify({"error": str(exc)}), 400
+        if not account:
+            return jsonify({"error": "account not found"}), 404
+        status = get_risk_policy_status(account["user_data_dir"])
+        status["account_id"] = account["account_id"]
+        return jsonify(status)
+    user_data_dir = request.args.get("user_data_dir", DEFAULT_USER_DATA_DIR)
     return jsonify(get_risk_policy_status(user_data_dir))
 
 
@@ -2017,45 +2247,74 @@ def _auto_task_config(task: dict) -> dict:
         return {}
 
 
+def _auto_task_account_id(task: dict) -> str:
+    config = _auto_task_config(task)
+    return str(
+        task.get("account_id") or config.get("account_id") or DEFAULT_ACCOUNT_ID
+    ).strip()
+
+
 def _auto_start_once() -> bool:
-    """Start at most one queued auto task; denied tasks stay pending."""
+    """Fill idle per-account slots; one account's denial never blocks another."""
     from crawl_task_manager import list_crawl_tasks
     from task_manager import list_tasks
 
     crawl_tasks = list_crawl_tasks(archived=False)
     comment_tasks = list_tasks(archived=False)
     active_statuses = {"starting", "running", "stopping"}
-    if any(task.get("status") in active_statuses for task in crawl_tasks):
-        return False
-    if any(task.get("status") in active_statuses for task in comment_tasks):
+    active_accounts = {
+        _auto_task_account_id(task)
+        for task in crawl_tasks + comment_tasks
+        if task.get("status") in active_statuses
+    }
+    available_slots = max(0, MAX_PARALLEL_XHS_ACCOUNTS - len(active_accounts))
+    if not available_slots:
         return False
 
-    # Searches go first so a cooled account can accumulate the two required
-    # clean canaries before any queued comment work is considered.
-    for task in reversed(crawl_tasks):
+    attempted_accounts: set[str] = set()
+    started = 0
+    # Searches go first so each account can accumulate clean canaries before
+    # that same account's queued comment work is considered.
+    candidates = [
+        (task, "search") for task in reversed(crawl_tasks)
+    ] + [
+        (task, "comment") for task in reversed(comment_tasks)
+    ]
+    for task, task_kind in candidates:
+        if started >= available_slots:
+            break
         if task.get("status") != "pending":
             continue
         if _auto_task_config(task).get("start_mode") != "auto":
             continue
-        result = _launch_crawl_task(task["id"])
-        status_code = result[1] if isinstance(result, tuple) else result.status_code
-        if status_code == 202:
-            logger.info("[risk-scheduler] started queued search task %s", task["id"])
-            return True
-        return False
-
-    for task in reversed(comment_tasks):
-        if task.get("status") != "pending":
+        account_id = _auto_task_account_id(task)
+        if account_id in active_accounts or account_id in attempted_accounts:
             continue
-        if _auto_task_config(task).get("start_mode") != "auto":
-            continue
-        result = _launch_comment_task(task["id"])
+        attempted_accounts.add(account_id)
+        result = (
+            _launch_crawl_task(task["id"])
+            if task_kind == "search"
+            else _launch_comment_task(task["id"])
+        )
         status_code = result[1] if isinstance(result, tuple) else result.status_code
-        if status_code == 202:
-            logger.info("[risk-scheduler] started queued comment task %s", task["id"])
-            return True
-        return False
-    return False
+        if status_code != 202:
+            logger.info(
+                "[risk-scheduler] account=%s kept queued %s task %s status=%s",
+                account_id,
+                task_kind,
+                task["id"],
+                status_code,
+            )
+            continue
+        active_accounts.add(account_id)
+        started += 1
+        logger.info(
+            "[risk-scheduler] account=%s started queued %s task %s",
+            account_id,
+            task_kind,
+            task["id"],
+        )
+    return started > 0
 
 
 def risk_scheduler_loop() -> None:
@@ -2102,6 +2361,7 @@ def api_cancel_crawl_task(task_id):
     elif kill_errors:
         clear_crawl_task_stop_request(task_id, "停止失败：" + "; ".join(kill_errors))
         return jsonify({"ok": False, "killed": False, "errors": kill_errors}), 500
+    _record_task_cancellation(task, "search")
     return jsonify({"ok": True, "killed": killed, "errors": kill_errors})
 
 

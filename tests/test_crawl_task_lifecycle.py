@@ -92,3 +92,20 @@ def test_old_exit_130_records_migrate_to_cancelled(monkeypatch, tmp_path):
     task = manager.get_crawl_task("crawl-old")
     assert task["status"] == "cancelled"
     assert task["stop_source"] == "legacy_unknown"
+
+
+def test_crawl_tasks_are_queryable_by_account(monkeypatch, tmp_path):
+    _use_temp_db(monkeypatch, tmp_path)
+    task_a = manager.create_crawl_task(
+        "account-a", ["词A"], {"account_id": "A"}, account_id="A"
+    )
+    task_b = manager.create_crawl_task(
+        "account-b", ["词B"], {"account_id": "B"}, account_id="B"
+    )
+
+    assert [task["id"] for task in manager.list_crawl_tasks(account_id="A")] == [
+        task_a
+    ]
+    assert [task["id"] for task in manager.list_crawl_tasks(account_id="B")] == [
+        task_b
+    ]

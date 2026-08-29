@@ -184,6 +184,83 @@ def test_abort_releases_atomic_reservation(monkeypatch, tmp_path):
     assert replacement.allowed
 
 
+def test_running_lease_is_renewed_and_blocks_same_account(monkeypatch, tmp_path):
+    _temp_policy(monkeypatch, tmp_path)
+    monkeypatch.setattr(policy, "BROWSER_GAP_SECONDS", 0)
+    monkeypatch.setattr(policy, "TASK_GAP_SECONDS", 0)
+    monkeypatch.setattr(policy, "RUNNING_LEASE_TTL_SECONDS", 120)
+    now = 1_800_000_000.0
+
+    first = policy.reserve_launch(
+        task_id="owner", task_kind="search", config=_search_config(), now=now
+    )
+    assert first.allowed
+    policy.confirm_launch("owner", "%s_user_data_dir_account02", now=now)
+    assert policy.heartbeat_launch(
+        "owner", "%s_user_data_dir_account02", now=now + 100
+    )
+
+    blocked = policy.reserve_launch(
+        task_id="racer",
+        task_kind="search",
+        config=_search_config(),
+        now=now + 150,
+    )
+    assert not blocked.allowed
+    assert "已有任务" in blocked.reason
+    assert policy.get_status(now=now + 150)["lease_expires_at"] == now + 220
+
+
+def test_late_completion_cannot_release_new_owner(monkeypatch, tmp_path):
+    _temp_policy(monkeypatch, tmp_path)
+    monkeypatch.setattr(policy, "BROWSER_GAP_SECONDS", 0)
+    monkeypatch.setattr(policy, "TASK_GAP_SECONDS", 0)
+    monkeypatch.setattr(policy, "RUNNING_LEASE_TTL_SECONDS", 10)
+    now = 1_800_000_000.0
+
+    assert policy.reserve_launch(
+        task_id="old", task_kind="search", config=_search_config(), now=now
+    ).allowed
+    policy.confirm_launch("old", "%s_user_data_dir_account02", now=now)
+    assert policy.reserve_launch(
+        task_id="new", task_kind="search", config=_search_config(), now=now + 11
+    ).allowed
+    policy.confirm_launch("new", "%s_user_data_dir_account02", now=now + 11)
+
+    status = policy.record_completion(
+        task_id="old",
+        task_kind="search",
+        user_data_dir="%s_user_data_dir_account02",
+        exit_code=0,
+        now=now + 12,
+    )
+    assert status["active_task_id"] == "new"
+    assert status["lease_expires_at"] == now + 21
+
+
+def test_risk_control_isolated_between_profiles(monkeypatch, tmp_path):
+    _temp_policy(monkeypatch, tmp_path)
+    now = 1_800_000_000.0
+    profile_a = "%s_user_data_dir_accountA"
+    profile_b = "%s_user_data_dir_accountB"
+
+    policy.record_completion(
+        task_id="risk-a",
+        task_kind="search",
+        user_data_dir=profile_a,
+        exit_code=75,
+        now=now,
+    )
+    assert policy.get_status(profile_a, now=now + 1)["state"] == "cooldown"
+    assert policy.get_status(profile_b, now=now + 1)["state"] == "normal"
+    assert policy.reserve_launch(
+        task_id="search-b",
+        task_kind="search",
+        config=_search_config(user_data_dir=profile_b),
+        now=now + 1,
+    ).allowed
+
+
 def test_launch_budget_retry_waits_until_count_falls_below_limit(monkeypatch, tmp_path):
     _temp_policy(monkeypatch, tmp_path)
     monkeypatch.setattr(policy, "BROWSER_GAP_SECONDS", 0)

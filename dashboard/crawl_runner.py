@@ -34,9 +34,25 @@ try:
 except ModuleNotFoundError:  # Support direct script execution.
     from rate_policy import DEFAULT_FIRST_LEVEL_COMMENTS, keyword_rate_defaults  # type: ignore[no-redef]
 try:
-    from dashboard.risk_policy import record_completion
+    from dashboard.risk_policy import launch_lease_heartbeat, record_completion
 except ModuleNotFoundError:
-    from risk_policy import record_completion  # type: ignore[no-redef]
+    from risk_policy import launch_lease_heartbeat, record_completion  # type: ignore[no-redef]
+try:
+    from dashboard.account_registry import (
+        DEFAULT_ACCOUNT_ID,
+        AccountRegistryError,
+        bind_task_config,
+    )
+except ModuleNotFoundError:
+    from account_registry import (  # type: ignore[no-redef]
+        DEFAULT_ACCOUNT_ID,
+        AccountRegistryError,
+        bind_task_config,
+    )
+try:
+    from dashboard.profile_lock import acquire_profile_lock
+except ModuleNotFoundError:
+    from profile_lock import acquire_profile_lock  # type: ignore[no-redef]
 import logging
 logger = logging.getLogger("MediaCrawler")
 
@@ -110,6 +126,10 @@ def _build_command(task: dict) -> tuple[list[str], dict]:
     ]
 
     env = os.environ.copy()
+    account_id = str(config.get("account_id", DEFAULT_ACCOUNT_ID))
+    runtime_log_path = (
+        LOG_DIR / "accounts" / account_id / f"{task_id}-runtime.log"
+    )
     env.update(
         {
             "MEDIACRAWLER_KEYWORDS": ",".join(keywords),
@@ -142,14 +162,17 @@ def _build_command(task: dict) -> tuple[list[str], dict]:
             "MEDIACRAWLER_XHS_NOTE_DETAIL_TIMEOUT_SEC": str(config.get("note_detail_timeout", 75)),
             "MEDIACRAWLER_XHS_PRE_SEARCH_DELAY_SEC": str(config.get("pre_search_delay", 75)),
             "MEDIACRAWLER_USER_DATA_DIR": str(config.get("user_data_dir", "%s_user_data_dir_account02")),
+            "MEDIACRAWLER_ACCOUNT": account_id,
+            "MEDIACRAWLER_SQLITE_DB_PATH": str(config.get("sqlite_db_path", "")),
+            "MEDIACRAWLER_LOG_PATH": str(runtime_log_path),
             "MEDIACRAWLER_ENABLE_CDP": _bool_text(bool(config.get("enable_cdp"))),
             "MEDIACRAWLER_REQUIRE_CDP": _bool_text(bool(config.get("require_cdp"))),
             "MEDIACRAWLER_CDP_DEBUG_PORT": os.getenv(
                 "MEDIACRAWLER_TASK_CDP_DEBUG_PORT",
                 str(config.get("cdp_debug_port", 9222)),
             ),
-            "MEDIACRAWLER_AUTO_CLOSE_BROWSER": "false",
-            "MEDIACRAWLER_CDP_CONNECT_EXISTING": "true",
+            "MEDIACRAWLER_AUTO_CLOSE_BROWSER": "true",
+            "MEDIACRAWLER_CDP_CONNECT_EXISTING": "false",
         }
     )
     if config.get("browser_path"):
@@ -163,12 +186,26 @@ def run_task(task_id: str) -> int:
         print(f"crawl task not found: {task_id}", file=sys.stderr)
         return 2
 
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
-    log_path = LOG_DIR / f"{task_id}.log"
+    try:
+        runtime_config, account = bind_task_config(
+            task.get("config") or {},
+            account_id=task.get("account_id") or DEFAULT_ACCOUNT_ID,
+            require_enabled=True,
+        )
+    except AccountRegistryError as exc:
+        finish_crawl_task(task_id, 1, str(exc))
+        return 1
+    task = dict(task)
+    task["config"] = runtime_config
+    task["account_id"] = account["account_id"]
+
+    account_log_dir = LOG_DIR / "accounts" / account["account_id"]
+    account_log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = account_log_dir / f"{task_id}.log"
     start_crawl_task(task_id, str(log_path), os.getpid())
 
     command, env = _build_command(task)
-    config = task.get("config") or {}
+    config = runtime_config
     started_at = time.strftime("%Y-%m-%d %H:%M:%S")
     try:
         with log_path.open("a", encoding="utf-8", errors="replace") as log:
@@ -182,17 +219,23 @@ def run_task(task_id: str) -> int:
                 log.write("[dry-run] Command was not executed.\n")
                 finish_crawl_task(task_id, 0)
                 return 0
-            process = subprocess.Popen(
-                command,
-                cwd=str(MEDIACRAWLER_ROOT),
-                env=env,
-                stdout=log,
-                stderr=subprocess.STDOUT,
-                start_new_session=True,
-                text=True,
-            )
-            set_crawl_worker_pid(task_id, process.pid)
-            exit_code = process.wait()
+            with acquire_profile_lock(
+                account_id=account["account_id"],
+                user_data_dir=account["user_data_dir"],
+                task_id=task_id,
+            ):
+                with launch_lease_heartbeat(task_id, account["user_data_dir"]):
+                    process = subprocess.Popen(
+                        command,
+                        cwd=str(MEDIACRAWLER_ROOT),
+                        env=env,
+                        stdout=log,
+                        stderr=subprocess.STDOUT,
+                        start_new_session=True,
+                        text=True,
+                    )
+                    set_crawl_worker_pid(task_id, process.pid)
+                    exit_code = process.wait()
             ended_at = time.strftime("%Y-%m-%d %H:%M:%S")
             log.write(f"\n[{ended_at}] crawler exited with code {exit_code}\n")
             if exit_code == RISK_CONTROL_EXIT_CODE:
@@ -207,7 +250,7 @@ def run_task(task_id: str) -> int:
             record_completion(
                 task_id=task_id,
                 task_kind="search",
-                user_data_dir=str(config.get("user_data_dir", "")),
+                user_data_dir=account["user_data_dir"],
                 exit_code=exit_code,
             )
             return exit_code
@@ -219,7 +262,7 @@ def run_task(task_id: str) -> int:
         record_completion(
             task_id=task_id,
             task_kind="search",
-            user_data_dir=str((task.get("config") or {}).get("user_data_dir", "")),
+            user_data_dir=account["user_data_dir"],
             exit_code=1,
         )
         try:

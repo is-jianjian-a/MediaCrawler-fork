@@ -13,6 +13,7 @@ import time
 import traceback
 import urllib.error
 import urllib.request
+from contextlib import nullcontext
 from datetime import date, datetime
 from pathlib import Path
 from typing import Dict, Iterable, List
@@ -25,9 +26,25 @@ sys.path.insert(0, str(DASHBOARD_DIR))
 
 from tools.app_runner import RISK_CONTROL_EXIT_CODE
 try:
-    from dashboard.risk_policy import record_completion
+    from dashboard.risk_policy import launch_lease_heartbeat, record_completion
 except ModuleNotFoundError:
-    from risk_policy import record_completion  # type: ignore[no-redef]
+    from risk_policy import launch_lease_heartbeat, record_completion  # type: ignore[no-redef]
+try:
+    from dashboard.account_registry import (
+        DEFAULT_ACCOUNT_ID,
+        AccountRegistryError,
+        bind_task_config,
+    )
+except ModuleNotFoundError:
+    from account_registry import (  # type: ignore[no-redef]
+        DEFAULT_ACCOUNT_ID,
+        AccountRegistryError,
+        bind_task_config,
+    )
+try:
+    from dashboard.profile_lock import acquire_profile_lock
+except ModuleNotFoundError:
+    from profile_lock import acquire_profile_lock  # type: ignore[no-redef]
 
 from task_manager import (  # noqa: E402
     claim_task,
@@ -184,8 +201,10 @@ class CommentTaskExecutor:
                  comment_sleep: int = COMMENTS_RATE.comment_sleep,
                  max_concurrency: int = COMMENTS_RATE.max_concurrency,
                  browser_path: str = "", inter_note_sleep: float = 0,
-                 publish_date_after: str = DEFAULT_COMMENT_PUBLISH_DATE_AFTER):
+                 publish_date_after: str = DEFAULT_COMMENT_PUBLISH_DATE_AFTER,
+                 account_id: str = DEFAULT_ACCOUNT_ID):
         self.db_path = os.path.abspath(db_path)
+        self.account_id = account_id
         self.max_comments = max_comments
         self.dry_run = dry_run
         self.user_data_dir = user_data_dir
@@ -203,21 +222,42 @@ class CommentTaskExecutor:
         self.last_exit_code = 0
         self.conn = sqlite3.connect(self.db_path, timeout=30)
         self.conn.row_factory = sqlite3.Row
+        self.note_account_scoped = "crawler_account" in {
+            row[1] for row in self.conn.execute("PRAGMA table_info(xhs_note)").fetchall()
+        }
+        self.comment_account_scoped = "crawler_account" in {
+            row[1]
+            for row in self.conn.execute("PRAGMA table_info(xhs_note_comment)").fetchall()
+        }
 
     def close(self):
         self.conn.close()
 
     def saved_comment_count(self, note_id: str) -> int:
+        if self.comment_account_scoped:
+            return self.conn.execute(
+                "SELECT COUNT(*) FROM xhs_note_comment "
+                "WHERE note_id = ? AND crawler_account = ?",
+                (note_id, self.account_id),
+            ).fetchone()[0]
         return self.conn.execute(
-            "SELECT COUNT(*) FROM xhs_note_comment WHERE note_id = ?", (note_id,)
+            "SELECT COUNT(*) FROM xhs_note_comment WHERE note_id = ?",
+            (note_id,),
         ).fetchone()[0]
 
     def get_post(self, note_id: str) -> Dict:
-        row = self.conn.execute(
-            """SELECT note_id, note_url, xsec_token, title
-               FROM xhs_note WHERE note_id = ?""",
-            (note_id,),
-        ).fetchone()
+        if self.note_account_scoped:
+            row = self.conn.execute(
+                """SELECT note_id, note_url, xsec_token, title
+                   FROM xhs_note WHERE note_id = ? AND crawler_account = ?""",
+                (note_id, self.account_id),
+            ).fetchone()
+        else:
+            row = self.conn.execute(
+                """SELECT note_id, note_url, xsec_token, title
+                   FROM xhs_note WHERE note_id = ?""",
+                (note_id,),
+            ).fetchone()
         return dict(row) if row else {}
 
     @staticmethod
@@ -293,7 +333,7 @@ class CommentTaskExecutor:
             process = subprocess.Popen(
                 command,
                 cwd=MEDIACRAWLER_ROOT,
-                env=self.crawler_environment(),
+                env=self.crawler_environment(task_id),
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
@@ -363,18 +403,28 @@ class CommentTaskExecutor:
             )
         return success
 
-    def crawler_environment(self) -> Dict[str, str]:
+    def crawler_environment(self, task_id: str = "") -> Dict[str, str]:
         """Use one explicitly configured isolated browser, never CDP."""
         env = os.environ.copy()
         env["MEDIACRAWLER_ENABLE_CDP"] = "false"
         env["MEDIACRAWLER_REQUIRE_CDP"] = "false"
-        env.setdefault("MEDIACRAWLER_AUTO_CLOSE_BROWSER", "false")
+        env["MEDIACRAWLER_AUTO_CLOSE_BROWSER"] = "true"
         env["MEDIACRAWLER_CDP_CONNECT_EXISTING"] = "false"
         env.pop("MEDIACRAWLER_CDP_ENDPOINT", None)
         env["MEDIACRAWLER_BROWSER_PATH"] = validate_standard_browser_path(
             self.browser_path
         )
-        env.setdefault("MEDIACRAWLER_USER_DATA_DIR", self.user_data_dir)
+        env["MEDIACRAWLER_ACCOUNT"] = self.account_id
+        env["MEDIACRAWLER_SQLITE_DB_PATH"] = self.db_path
+        env["MEDIACRAWLER_USER_DATA_DIR"] = self.user_data_dir
+        env["MEDIACRAWLER_TASK_ID"] = task_id
+        env["MEDIACRAWLER_LOG_PATH"] = str(
+            DASHBOARD_DIR
+            / "logs"
+            / "accounts"
+            / self.account_id
+            / f"{task_id or 'comment'}-runtime.log"
+        )
         env["MEDIACRAWLER_ENABLE_RANDOM_SLEEP"] = "true"
         env["MEDIACRAWLER_CRAWLER_MIN_SLEEP_SEC"] = str(self.min_sleep)
         env["MEDIACRAWLER_CRAWLER_MAX_SLEEP_SEC"] = str(self.max_sleep)
@@ -388,6 +438,7 @@ class CommentTaskExecutor:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run a comment supplement task")
     parser.add_argument("--task-id", required=True)
+    parser.add_argument("--account-id")
     parser.add_argument("--db-path", default="database/sqlite_tables.db")
     parser.add_argument("--batch-size", type=int)
     parser.add_argument("--max-comments", type=int)
@@ -419,6 +470,18 @@ def main() -> int:
         task_config = json.loads(task.get("config_json") or "{}")
     except (TypeError, json.JSONDecodeError):
         task_config = {}
+    try:
+        runtime_config, account = bind_task_config(
+            task_config,
+            account_id=args.account_id or task.get("account_id") or DEFAULT_ACCOUNT_ID,
+            require_enabled=True,
+        )
+    except AccountRegistryError as exc:
+        parser.error(str(exc))
+    task_config = runtime_config
+    args.account_id = account["account_id"]
+    args.db_path = account["sqlite_db_path"]
+    args.user_data_dir = account["user_data_dir"]
     args.batch_size = args.batch_size or int(
         task_config.get("batch_size", DEFAULT_COMMENT_TASK_BATCH_SIZE)
     )
@@ -476,7 +539,7 @@ def main() -> int:
     db_path = args.db_path
     if not os.path.isabs(db_path):
         db_path = str(MEDIACRAWLER_ROOT / db_path)
-    log_dir = DASHBOARD_DIR / "logs"
+    log_dir = DASHBOARD_DIR / "logs" / "accounts" / args.account_id
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / f"{args.task_id}-{int(time.time())}.log"
 
@@ -485,6 +548,7 @@ def main() -> int:
         args.get_sub_comments, args.max_sub_comments,
         args.min_sleep, args.max_sleep, args.comment_sleep, args.max_concurrency,
         args.browser_path, args.delay, args.publish_date_after,
+        account_id=args.account_id,
     )
     if not args.dry_run:
         if task["status"] in ("pending", "completed_with_errors"):
@@ -502,25 +566,40 @@ def main() -> int:
     interrupted = False
     risk_control_stopped = False
     fatal_error = None
+    profile_guard = (
+        nullcontext()
+        if args.dry_run
+        else acquire_profile_lock(
+            account_id=account["account_id"],
+            user_data_dir=account["user_data_dir"],
+            task_id=args.task_id,
+        )
+    )
+    lease_guard = (
+        nullcontext()
+        if args.dry_run
+        else launch_lease_heartbeat(args.task_id, account["user_data_dir"])
+    )
     try:
-        with log_path.open("a", encoding="utf-8") as log_file:
-            print(f"[task-run] posts={len(posts)} browser_launches=1", file=log_file, flush=True)
-            all_ok = executor.run_batch(args.task_id, posts, log_file)
-            if executor.last_exit_code == RISK_CONTROL_EXIT_CODE:
-                risk_control_stopped = True
-                error = "XHS risk control CAPTCHA (HTTP 461/471); remaining notes were not started"
-                print(f"[risk-control-stop] {error}", file=log_file, flush=True)
-                for pending_post in get_task_posts(args.task_id, status="pending"):
-                    note_id = pending_post["note_id"]
-                    count = executor.saved_comment_count(note_id)
-                    update_post_status(
-                        args.task_id,
-                        note_id,
-                        "failed",
-                        count,
-                        error,
-                        pending_post["comment_count_before"],
-                    )
+        with profile_guard, lease_guard:
+            with log_path.open("a", encoding="utf-8") as log_file:
+                print(f"[task-run] posts={len(posts)} browser_launches=1", file=log_file, flush=True)
+                all_ok = executor.run_batch(args.task_id, posts, log_file)
+                if executor.last_exit_code == RISK_CONTROL_EXIT_CODE:
+                    risk_control_stopped = True
+                    error = "XHS risk control CAPTCHA (HTTP 461/471); remaining notes were not started"
+                    print(f"[risk-control-stop] {error}", file=log_file, flush=True)
+                    for pending_post in get_task_posts(args.task_id, status="pending"):
+                        note_id = pending_post["note_id"]
+                        count = executor.saved_comment_count(note_id)
+                        update_post_status(
+                            args.task_id,
+                            note_id,
+                            "failed",
+                            count,
+                            error,
+                            pending_post["comment_count_before"],
+                        )
     except KeyboardInterrupt:
         interrupted = True
         all_ok = False
@@ -540,12 +619,12 @@ def main() -> int:
         executor.close()
 
     final_exit_code = 130 if interrupted else (RISK_CONTROL_EXIT_CODE if risk_control_stopped else (0 if all_ok else 1))
-    finish_task(args.task_id)
+    finish_task(args.task_id, final_exit_code)
     if not args.dry_run:
         record_completion(
             task_id=args.task_id,
             task_kind="comment",
-            user_data_dir=args.user_data_dir,
+            user_data_dir=account["user_data_dir"],
             exit_code=final_exit_code,
         )
     logger.info(f"Task {args.task_id} {('finished' if all_ok else 'finished with errors')}; log={log_path}")

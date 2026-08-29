@@ -45,7 +45,7 @@
 
 ## 账号级状态机（Dashboard 搜索与评论共享）
 
-`dashboard/risk_policy.py` 将搜索任务和评论任务放在同一个持久化账号预算里。状态写入 `dashboard/database/task_manager.db`，Dashboard 或 worker 重启后不会清零。
+`dashboard/risk_policy.py` 将同一账号的搜索任务和评论任务放在同一个持久化预算里；不同注册账号拥有互不累计的状态。状态写入 `dashboard/database/task_manager.db`，Dashboard 或 worker 重启后不会清零。多账号的 Profile、内容库、日志、调度和故障边界见 [小红书多账号隔离并行运行](xhs_multi_account_isolation.md)。
 
 | 状态 | 含义 | 自动动作 |
 |---|---|---|
@@ -60,14 +60,14 @@
 - 两次浏览器启动至少间隔 90 分钟。
 - 任意滚动 12 小时最多启动 16 个浏览器任务会话。该值取自历史无显式风控的滚动 12 小时峰值 20 次，保留 20% 余量；它是内部策略值，不是平台公开限额。
 
-注意：当前 standard mode 每个 Dashboard worker 都有独立的 Playwright 生命周期。`AUTO_CLOSE_BROWSER=false` 只是不主动调用 `context.close()`，不能在 worker 进程退出后跨任务复用浏览器。因此这里计数的是“浏览器任务会话”；减少重复开关应优先靠合并搜索工作、聚合评论候选后再跑一个批次，而不是把 `AUTO_CLOSE_BROWSER` 当成跨任务复用。
+注意：当前 standard mode 每个 Dashboard worker 都有独立的 Playwright 生命周期，任务结束时会清理自己的 browser context。即使把 `AUTO_CLOSE_BROWSER` 设为 false，也不能在 worker 进程退出后安全地跨任务复用浏览器，反而可能留下占用 Profile 的孤儿进程。因此这里计数的是“浏览器任务会话”；减少重复开关应优先靠合并搜索工作、聚合评论候选后再跑一个批次。
 
 - 为避免搜索/评论任务交替反复开浏览器，账号闸门要求一个评论会话之后至少累计 2 个新搜索会话，才允许开启下一个合并评论批次。
 - 评论只有在两次干净搜索探针完成后才能启动；每次最多 2 帖、每帖最多 5 条、评论间隔至少 90 秒。
 - 不自动切换账号、代理、浏览器指纹；Dashboard 任务禁用 CDP、端口 9222 和系统 Chrome。
 - CAPTCHA 不能自动解决。无人值守的含义是系统会安全停机、等待、探针恢复；仍需验证码时保持暂停，不伪装成持续采集成功。
 
-Dashboard 后台每 30 秒检查一次 `start_mode=auto` 的待处理队列。被冷却或启动预算拒绝的任务保持 `pending`，到达允许时间后自动再次评估；失败任务不会原地自动重试。搜索优先于评论，以保证恢复探针先完成。
+Dashboard 后台每 30 秒检查一次 `start_mode=auto` 的待处理队列。被冷却或启动预算拒绝的任务保持 `pending`，到达允许时间后自动再次评估；失败任务不会原地自动重试。搜索优先于评论，以保证恢复探针先完成。同一账号严格串行；一个账号被拒绝不会阻塞其他账号，默认最多 4 个隔离账号并行。
 
 ## 操作规则
 

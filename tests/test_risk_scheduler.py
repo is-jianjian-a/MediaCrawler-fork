@@ -44,9 +44,20 @@ def test_scheduler_does_not_skip_denied_search_to_start_comments():
     launch_comment.assert_not_called()
 
 
-def test_scheduler_stays_idle_while_any_worker_is_active():
+def test_scheduler_stays_idle_when_only_pending_work_uses_active_account():
     crawl_tasks = [
-        {"id": "active", "status": "running", "config": {"start_mode": "auto"}},
+        {
+            "id": "active",
+            "account_id": "A",
+            "status": "running",
+            "config": {"start_mode": "auto", "account_id": "A"},
+        },
+        {
+            "id": "same-account",
+            "account_id": "A",
+            "status": "pending",
+            "config": {"start_mode": "auto", "account_id": "A"},
+        },
     ]
     with (
         mock.patch("crawl_task_manager.list_crawl_tasks", return_value=crawl_tasks),
@@ -56,3 +67,60 @@ def test_scheduler_stays_idle_while_any_worker_is_active():
         assert server._auto_start_once() is False
 
     launch_search.assert_not_called()
+
+
+def test_scheduler_starts_other_account_while_one_is_active():
+    crawl_tasks = [
+        {
+            "id": "active-a",
+            "account_id": "A",
+            "status": "running",
+            "config": {"start_mode": "auto", "account_id": "A"},
+        },
+        {
+            "id": "pending-b",
+            "account_id": "B",
+            "status": "pending",
+            "config": {"start_mode": "auto", "account_id": "B"},
+        },
+    ]
+    with (
+        mock.patch("crawl_task_manager.list_crawl_tasks", return_value=crawl_tasks),
+        mock.patch("task_manager.list_tasks", return_value=[]),
+        mock.patch.object(server, "_launch_crawl_task", return_value=({}, 202)) as launch_search,
+    ):
+        assert server._auto_start_once() is True
+
+    launch_search.assert_called_once_with("pending-b")
+
+
+def test_denied_account_does_not_block_another_account():
+    crawl_tasks = [
+        {
+            "id": "pending-b",
+            "account_id": "B",
+            "status": "pending",
+            "config": {"start_mode": "auto", "account_id": "B"},
+        },
+        {
+            "id": "denied-a",
+            "account_id": "A",
+            "status": "pending",
+            "config": {"start_mode": "auto", "account_id": "A"},
+        },
+    ]
+
+    def launch(task_id):
+        return ({}, 429 if task_id == "denied-a" else 202)
+
+    with (
+        mock.patch("crawl_task_manager.list_crawl_tasks", return_value=crawl_tasks),
+        mock.patch("task_manager.list_tasks", return_value=[]),
+        mock.patch.object(server, "_launch_crawl_task", side_effect=launch) as launch_search,
+    ):
+        assert server._auto_start_once() is True
+
+    assert [call.args[0] for call in launch_search.call_args_list] == [
+        "denied-a",
+        "pending-b",
+    ]
