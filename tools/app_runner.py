@@ -30,6 +30,10 @@ logger = logging.getLogger("MediaCrawler")
 
 AsyncFn = Callable[[], Awaitable[None]]
 
+# EX_TEMPFAIL: used by callers to distinguish explicit platform risk control
+# from an ordinary crawler exception without parsing log text.
+RISK_CONTROL_EXIT_CODE = 75
+
 
 def run(
     app_main: AsyncFn,
