@@ -186,17 +186,20 @@ def claim_crawl_task(task_id: str) -> tuple[bool, str]:
 
 def start_crawl_task(task_id: str, log_path: str, worker_pid: int = None) -> None:
     conn = _connect()
-    conn.execute(
+    cursor = conn.execute(
         """
         UPDATE crawl_tasks
         SET status = 'running', started_at = COALESCE(started_at, ?),
             log_path = ?, worker_pid = ?, error_message = NULL
-        WHERE id = ?
+        WHERE id = ? AND status = 'starting'
         """,
         (time.time(), log_path, worker_pid, task_id),
     )
+    changed = cursor.rowcount
     conn.commit()
     conn.close()
+    if changed != 1:
+        raise RuntimeError("crawl task is no longer in starting state")
 
 
 def set_crawl_worker_pid(task_id: str, worker_pid: int) -> None:

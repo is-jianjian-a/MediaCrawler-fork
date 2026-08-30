@@ -76,6 +76,172 @@ def _account_key(user_data_dir: str, platform: str = "xhs") -> str:
     return f"{platform}:{profile}"
 
 
+def _historical_account_key(
+    conn: sqlite3.Connection, account_id: str, config: Dict[str, Any]
+) -> str:
+    if account_id:
+        account_table = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='xhs_accounts'"
+        ).fetchone()
+        if account_table:
+            row = conn.execute(
+                "SELECT user_data_dir FROM xhs_accounts WHERE account_id=?",
+                (account_id,),
+            ).fetchone()
+            if row and row[0]:
+                return _account_key(row[0])
+    return _account_key(config.get("user_data_dir", ""))
+
+
+def _sync_historical_event(
+    conn: sqlite3.Connection,
+    *,
+    account_key: str,
+    task_id: str,
+    task_kind: str,
+    event_type: str,
+    event_ts: float,
+    detail: Dict[str, Any],
+) -> None:
+    """Insert a legacy event or repair an earlier imported route."""
+    existing = conn.execute(
+        """SELECT id, account_key, task_kind, detail_json
+           FROM xhs_risk_events
+           WHERE task_id=? AND event_type=? LIMIT 1""",
+        (task_id, event_type),
+    ).fetchone()
+    if existing:
+        try:
+            existing_detail = json.loads(existing["detail_json"] or "{}")
+        except (TypeError, json.JSONDecodeError):
+            existing_detail = {}
+        if existing_detail.get("imported") and (
+            existing["account_key"] != account_key
+            or existing["task_kind"] != task_kind
+        ):
+            conn.execute(
+                "UPDATE xhs_risk_events SET account_key=?, task_kind=? WHERE id=?",
+                (account_key, task_kind, existing["id"]),
+            )
+        return
+    conn.execute(
+        """INSERT INTO xhs_risk_events
+           (account_key, task_id, task_kind, event_type, event_ts, detail_json)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (
+            account_key,
+            task_id,
+            task_kind,
+            event_type,
+            float(event_ts),
+            json.dumps(detail, ensure_ascii=False, separators=(",", ":")),
+        ),
+    )
+
+
+def _rebuild_event_summaries(conn: sqlite3.Connection) -> None:
+    """Rebuild derived state after historical account routes are repaired."""
+    account_keys = {
+        row[0]
+        for row in conn.execute(
+            "SELECT account_key FROM xhs_risk_state "
+            "UNION SELECT account_key FROM xhs_risk_events"
+        ).fetchall()
+    }
+    now = time.time()
+    completion_types = (
+        "task_succeeded",
+        "task_failed",
+        "task_cancelled",
+        "risk_control",
+    )
+    for account_key in account_keys:
+        _ensure_state(conn, account_key, now)
+        latest_launch = float(
+            conn.execute(
+                "SELECT COALESCE(MAX(event_ts), 0) FROM xhs_risk_events "
+                "WHERE account_key=? AND event_type='launch_started'",
+                (account_key,),
+            ).fetchone()[0]
+        )
+        placeholders = ",".join("?" for _ in completion_types)
+        latest_completion = float(
+            conn.execute(
+                f"SELECT COALESCE(MAX(event_ts), 0) FROM xhs_risk_events "
+                f"WHERE account_key=? AND event_type IN ({placeholders})",
+                (account_key, *completion_types),
+            ).fetchone()[0]
+        )
+        latest_risk = float(
+            conn.execute(
+                "SELECT COALESCE(MAX(event_ts), 0) FROM xhs_risk_events "
+                "WHERE account_key=? AND event_type='risk_control'",
+                (account_key,),
+            ).fetchone()[0]
+        )
+        clean_canaries = min(
+            REQUIRED_CLEAN_CANARIES,
+            int(
+                conn.execute(
+                    """SELECT COUNT(*) FROM xhs_risk_events
+                       WHERE account_key=? AND event_type='task_succeeded'
+                         AND task_kind='search' AND event_ts>?""",
+                    (account_key, latest_risk),
+                ).fetchone()[0]
+            ),
+        )
+        risk_day = ""
+        risk_count = 0
+        cooldown_until = 0.0
+        locked_until = 0.0
+        if latest_risk:
+            risk_day = _local_day(latest_risk)
+            day_start = datetime.fromisoformat(risk_day).timestamp()
+            day_end = day_start + 24 * 3600
+            risk_count = int(
+                conn.execute(
+                    """SELECT COUNT(*) FROM xhs_risk_events
+                       WHERE account_key=? AND event_type='risk_control'
+                         AND event_ts>=? AND event_ts<?""",
+                    (account_key, day_start, day_end),
+                ).fetchone()[0]
+            )
+            if risk_count >= 2:
+                locked_until = day_end
+            else:
+                cooldown_until = latest_risk + COOLDOWN_SECONDS
+        if locked_until > now:
+            state = "locked"
+        elif cooldown_until > now:
+            state = "cooldown"
+        elif clean_canaries >= REQUIRED_CLEAN_CANARIES:
+            state = "normal"
+        else:
+            state = "canary"
+        conn.execute(
+            """UPDATE xhs_risk_state
+               SET state=?, clean_canaries=?, cooldown_until=?, locked_until=?,
+                   last_task_started_at=?, last_task_completed_at=?,
+                   last_browser_launch_at=?, last_risk_at=?, risk_day=?,
+                   risk_count_day=?, updated_at=?
+               WHERE account_key=?""",
+            (
+                state,
+                clean_canaries,
+                cooldown_until,
+                locked_until,
+                latest_launch,
+                latest_completion,
+                latest_launch,
+                latest_risk,
+                risk_day,
+                risk_count,
+                now,
+                account_key,
+            ),
+        )
+
+
 def _local_day(ts: float) -> str:
     return datetime.fromtimestamp(ts).date().isoformat()
 
@@ -130,32 +296,37 @@ def init_risk_policy_db() -> None:
     # One-time/idempotent import of typed risk exits created before this
     # account-level policy existed.  This keeps a Dashboard restart from
     # forgetting an active cooldown.
-    crawl_table = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='crawl_tasks'"
-    ).fetchone()
-    if crawl_table:
+    for table_name, task_kind in (("crawl_tasks", "search"), ("tasks", "comment")):
+        table_exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table_name,)
+        ).fetchone()
+        if not table_exists:
+            continue
+        columns = {
+            row[1] for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+        }
+        account_expr = "account_id" if "account_id" in columns else "''"
         historical = conn.execute(
-            """SELECT id, COALESCE(completed_at, started_at, created_at), config_json
-               FROM crawl_tasks WHERE exit_code=75 ORDER BY 2"""
+            f"SELECT id, COALESCE(completed_at, started_at, created_at), "
+            f"config_json, {account_expr} FROM {table_name} "
+            "WHERE exit_code=75 ORDER BY 2"
         ).fetchall()
-        for task_id, event_ts, config_json in historical:
-            exists = conn.execute(
-                """SELECT 1 FROM xhs_risk_events
-                   WHERE task_id=? AND event_type='risk_control' LIMIT 1""",
-                (task_id,),
-            ).fetchone()
-            if exists or not event_ts:
+        for task_id, event_ts, config_json, account_id in historical:
+            if not event_ts:
                 continue
             try:
                 config = json.loads(config_json or "{}")
             except (TypeError, json.JSONDecodeError):
                 config = {}
-            account_key = _account_key(config.get("user_data_dir", ""))
-            conn.execute(
-                """INSERT INTO xhs_risk_events
-                   (account_key, task_id, task_kind, event_type, event_ts, detail_json)
-                   VALUES (?, ?, 'search', 'risk_control', ?, '{"exit_code":75,"imported":true}')""",
-                (account_key, task_id, float(event_ts)),
+            account_key = _historical_account_key(conn, account_id, config)
+            _sync_historical_event(
+                conn,
+                account_key=account_key,
+                task_id=task_id,
+                task_kind=task_kind,
+                event_type="risk_control",
+                event_ts=float(event_ts),
+                detail={"exit_code": 75, "imported": True},
             )
 
     # Import one browser-launch lower bound per historical Dashboard task.  A
@@ -167,15 +338,15 @@ def init_risk_policy_db() -> None:
         ).fetchone()
         if not table_exists:
             continue
-        for task_id, started_at, config_json in conn.execute(
-            f"SELECT id, started_at, config_json FROM {table_name} WHERE started_at IS NOT NULL"
+        columns = {
+            row[1] for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+        }
+        account_expr = "account_id" if "account_id" in columns else "''"
+        for task_id, started_at, config_json, account_id in conn.execute(
+            f"SELECT id, started_at, config_json, {account_expr} "
+            f"FROM {table_name} WHERE started_at IS NOT NULL"
         ).fetchall():
-            exists = conn.execute(
-                """SELECT 1 FROM xhs_risk_events
-                   WHERE task_id=? AND task_kind=? AND event_type='launch_started' LIMIT 1""",
-                (task_id, task_kind),
-            ).fetchone()
-            if exists or not started_at:
+            if not started_at:
                 continue
             try:
                 config = json.loads(config_json or "{}")
@@ -183,79 +354,17 @@ def init_risk_policy_db() -> None:
                 config = {}
             if config.get("dry_run"):
                 continue
-            account_key = _account_key(config.get("user_data_dir", ""))
-            conn.execute(
-                """INSERT INTO xhs_risk_events
-                   (account_key, task_id, task_kind, event_type, event_ts, detail_json)
-                   VALUES (?, ?, ?, 'launch_started', ?, '{"imported":true,"lower_bound":true}')""",
-                (account_key, task_id, task_kind, float(started_at)),
+            account_key = _historical_account_key(conn, account_id, config)
+            _sync_historical_event(
+                conn,
+                account_key=account_key,
+                task_id=task_id,
+                task_kind=task_kind,
+                event_type="launch_started",
+                event_ts=float(started_at),
+                detail={"imported": True, "lower_bound": True},
             )
-
-    for account_row in conn.execute(
-        "SELECT DISTINCT account_key FROM xhs_risk_events WHERE event_type='launch_started'"
-    ).fetchall():
-        account_key = account_row[0]
-        latest_launch = conn.execute(
-            """SELECT MAX(event_ts) FROM xhs_risk_events
-               WHERE account_key=? AND event_type='launch_started'""",
-            (account_key,),
-        ).fetchone()[0]
-        if latest_launch:
-            conn.execute(
-                """INSERT INTO xhs_risk_state
-                   (account_key, last_task_started_at, last_browser_launch_at, updated_at)
-                   VALUES (?, ?, ?, ?)
-                   ON CONFLICT(account_key) DO UPDATE SET
-                     last_task_started_at=MAX(last_task_started_at, excluded.last_task_started_at),
-                     last_browser_launch_at=MAX(last_browser_launch_at, excluded.last_browser_launch_at),
-                     updated_at=MAX(updated_at, excluded.updated_at)""",
-                (account_key, latest_launch, latest_launch, time.time()),
-            )
-
-    for account_row in conn.execute(
-        "SELECT DISTINCT account_key FROM xhs_risk_events WHERE event_type='risk_control'"
-    ).fetchall():
-        account_key = account_row[0]
-        latest = conn.execute(
-            """SELECT MAX(event_ts) FROM xhs_risk_events
-               WHERE account_key=? AND event_type='risk_control'""",
-            (account_key,),
-        ).fetchone()[0]
-        if not latest:
-            continue
-        latest_day = _local_day(float(latest))
-        day_start = datetime.fromisoformat(latest_day).timestamp()
-        day_end = day_start + 24 * 3600
-        count_day = conn.execute(
-            """SELECT COUNT(*) FROM xhs_risk_events
-               WHERE account_key=? AND event_type='risk_control'
-                 AND event_ts>=? AND event_ts<?""",
-            (account_key, day_start, day_end),
-        ).fetchone()[0]
-        current = conn.execute(
-            "SELECT last_risk_at FROM xhs_risk_state WHERE account_key=?", (account_key,)
-        ).fetchone()
-        if current and float(current[0] or 0) >= float(latest):
-            continue
-        now = time.time()
-        if count_day >= 2 and day_end > now:
-            state, cooldown_until, locked_until = "locked", 0, day_end
-        else:
-            cooldown_until = float(latest) + COOLDOWN_SECONDS
-            locked_until = 0
-            state = "cooldown" if cooldown_until > now else "canary"
-        conn.execute(
-            """INSERT INTO xhs_risk_state
-               (account_key, state, clean_canaries, cooldown_until, locked_until,
-                last_risk_at, risk_day, risk_count_day, updated_at)
-               VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?)
-               ON CONFLICT(account_key) DO UPDATE SET
-                 state=excluded.state, clean_canaries=0,
-                 cooldown_until=excluded.cooldown_until, locked_until=excluded.locked_until,
-                 last_risk_at=excluded.last_risk_at, risk_day=excluded.risk_day,
-                 risk_count_day=excluded.risk_count_day, updated_at=excluded.updated_at""",
-            (account_key, state, cooldown_until, locked_until, latest, latest_day, count_day, now),
-        )
+    _rebuild_event_summaries(conn)
     conn.commit()
     conn.close()
     _INITIALIZED_DATABASES.add(database_key)
@@ -455,6 +564,30 @@ def confirm_launch(task_id: str, user_data_dir: str, now: Optional[float] = None
         )
     conn.commit()
     conn.close()
+
+
+def assert_launch_reserved(
+    task_id: str,
+    task_kind: str,
+    user_data_dir: str,
+    now: Optional[float] = None,
+) -> None:
+    """Reject direct or stale worker entry without a live reservation."""
+    init_risk_policy_db()
+    now = time.time() if now is None else float(now)
+    conn = _connect()
+    try:
+        row = _ensure_state(conn, _account_key(user_data_dir), now)
+        valid = (
+            row["active_task_id"] == task_id
+            and row["active_task_kind"] == task_kind
+            and float(row["reservation_until"]) > now
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    if not valid:
+        raise RuntimeError("worker launch is missing an active Dashboard reservation")
 
 
 def heartbeat_launch(

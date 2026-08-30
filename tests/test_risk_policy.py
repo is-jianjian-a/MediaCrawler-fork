@@ -1,5 +1,11 @@
 """Account-level XHS risk policy state-machine tests (no network/browser)."""
 
+import json
+import os
+import sqlite3
+
+import pytest
+
 from dashboard import risk_policy as policy
 
 
@@ -80,6 +86,134 @@ def test_risk_cooldown_then_two_clean_canaries(monkeypatch, tmp_path):
     )
     assert status["state"] == "normal"
     assert status["clean_canaries"] == 2
+
+
+def test_worker_requires_live_matching_reservation(monkeypatch, tmp_path):
+    _temp_policy(monkeypatch, tmp_path)
+    now = 1_800_000_000.0
+    with pytest.raises(RuntimeError, match="active Dashboard reservation"):
+        policy.assert_launch_reserved(
+            "direct", "search", "%s_user_data_dir_accountA", now=now
+        )
+
+    decision = policy.reserve_launch(
+        task_id="reserved",
+        task_kind="search",
+        config=_search_config(user_data_dir="%s_user_data_dir_accountA"),
+        now=now,
+    )
+    assert decision.allowed
+    policy.assert_launch_reserved(
+        "reserved", "search", "%s_user_data_dir_accountA", now=now + 1
+    )
+    with pytest.raises(RuntimeError, match="active Dashboard reservation"):
+        policy.assert_launch_reserved(
+            "reserved", "comment", "%s_user_data_dir_accountA", now=now + 1
+        )
+
+
+def test_historical_comment_risk_uses_registered_account_profile(monkeypatch, tmp_path):
+    risk_db = tmp_path / "risk.db"
+    conn = sqlite3.connect(risk_db)
+    conn.execute(
+        "CREATE TABLE xhs_accounts (account_id TEXT, user_data_dir TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO xhs_accounts VALUES ('B', '%s_user_data_dir_accountB')"
+    )
+    conn.execute(
+        """CREATE TABLE tasks (
+               id TEXT, account_id TEXT, created_at REAL, started_at REAL,
+               completed_at REAL, config_json TEXT, exit_code INTEGER
+           )"""
+    )
+    conn.execute(
+        "INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ("comment-risk", "B", 100.0, 110.0, 120.0, json.dumps({}), 75),
+    )
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(policy, "RISK_DB", str(risk_db))
+
+    policy.init_risk_policy_db()
+
+    conn = sqlite3.connect(risk_db)
+    row = conn.execute(
+        "SELECT account_key, task_kind FROM xhs_risk_events "
+        "WHERE task_id='comment-risk' AND event_type='risk_control'"
+    ).fetchone()
+    conn.close()
+    assert row == ("xhs:%s_user_data_dir_accountB", "comment")
+
+
+def test_historical_import_repairs_old_account_route_and_stale_summary(
+    monkeypatch, tmp_path
+):
+    risk_db = tmp_path / "risk.db"
+    monkeypatch.setattr(policy, "RISK_DB", str(risk_db))
+    policy.init_risk_policy_db()
+
+    conn = sqlite3.connect(risk_db)
+    conn.execute("CREATE TABLE xhs_accounts (account_id TEXT, user_data_dir TEXT)")
+    conn.execute(
+        "INSERT INTO xhs_accounts VALUES ('B', '%s_user_data_dir_accountB')"
+    )
+    conn.execute(
+        """CREATE TABLE tasks (
+               id TEXT, account_id TEXT, created_at REAL, started_at REAL,
+               completed_at REAL, config_json TEXT, exit_code INTEGER
+           )"""
+    )
+    conn.execute(
+        "INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ("comment-risk", "B", 100.0, 110.0, 120.0, json.dumps({}), 75),
+    )
+    old_key = "xhs:%s_user_data_dir_account02"
+    conn.execute(
+        """INSERT INTO xhs_risk_events
+           (account_key, task_id, task_kind, event_type, event_ts, detail_json)
+           VALUES (?, 'comment-risk', 'comment', 'risk_control', 120,
+                   '{"exit_code":75,"imported":true}')""",
+        (old_key,),
+    )
+    conn.execute(
+        """INSERT INTO xhs_risk_events
+           (account_key, task_id, task_kind, event_type, event_ts, detail_json)
+           VALUES (?, 'comment-risk', 'comment', 'launch_started', 110,
+                   '{"imported":true,"lower_bound":true}')""",
+        (old_key,),
+    )
+    conn.execute(
+        """INSERT OR REPLACE INTO xhs_risk_state
+           (account_key, state, clean_canaries, last_task_started_at,
+            last_browser_launch_at, last_risk_at, updated_at)
+           VALUES (?, 'cooldown', 0, 110, 110, 120, 120)""",
+        (old_key,),
+    )
+    conn.commit()
+    conn.close()
+
+    policy._INITIALIZED_DATABASES.discard(os.path.abspath(risk_db))
+    policy.init_risk_policy_db()
+
+    conn = sqlite3.connect(risk_db)
+    events = conn.execute(
+        "SELECT DISTINCT account_key FROM xhs_risk_events WHERE task_id='comment-risk'"
+    ).fetchall()
+    old_state = conn.execute(
+        "SELECT last_browser_launch_at, last_risk_at FROM xhs_risk_state "
+        "WHERE account_key=?",
+        (old_key,),
+    ).fetchone()
+    new_state = conn.execute(
+        "SELECT last_browser_launch_at, last_risk_at FROM xhs_risk_state "
+        "WHERE account_key='xhs:%s_user_data_dir_accountB'"
+    ).fetchone()
+    conn.close()
+
+    assert events == [("xhs:%s_user_data_dir_accountB",)]
+    assert old_state == (0.0, 0.0)
+    assert new_state == (110.0, 120.0)
 
 
 def test_second_risk_same_day_locks_until_next_day(monkeypatch, tmp_path):

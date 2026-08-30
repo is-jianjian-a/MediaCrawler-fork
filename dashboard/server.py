@@ -1351,12 +1351,40 @@ def _profile_busy_response(account: dict):
     ), 409
 
 
+def _terminate_task_group(pid: int, timeout: float = 5.0) -> bool:
+    """Stop one Dashboard-owned process group and confirm it is gone."""
+    try:
+        os.killpg(int(pid), 15)
+    except ProcessLookupError:
+        return True
+    except OSError:
+        return False
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if not _process_group_alive(pid):
+            return True
+        time.sleep(0.1)
+    try:
+        os.killpg(int(pid), 9)
+    except ProcessLookupError:
+        return True
+    except OSError:
+        return False
+    deadline = time.time() + 2
+    while time.time() < deadline:
+        if not _process_group_alive(pid):
+            return True
+        time.sleep(0.1)
+    return not _process_group_alive(pid)
+
+
 def _launch_comment_task(task_id, retry_failed=False):
     from task_manager import claim_task, fail_task_start, get_task, set_task_worker_pid
 
     task = get_task(task_id)
     if not task:
         return jsonify({"error": "task not found"}), 404
+    worker = None
     try:
         task_config = json.loads(task.get("config_json") or "{}")
     except (TypeError, json.JSONDecodeError):
@@ -1473,6 +1501,8 @@ def _launch_comment_task(task_id, retry_failed=False):
         )
         set_task_worker_pid(task_id, worker.pid)
     except Exception as exc:
+        if worker is not None:
+            _terminate_task_group(worker.pid)
         fail_task_start(task_id, str(exc))
         if not dry_run:
             abort_launch(task_id, task_config.get("user_data_dir", ""), str(exc))
@@ -1551,14 +1581,15 @@ def api_cancel_task(task_id):
             kill_errors.append(str(exc))
 
     for candidate_pid in dict.fromkeys(candidate_pids):
-        try:
-            os.killpg(candidate_pid, 15)
+        if _terminate_task_group(candidate_pid):
             killed = True
-        except ProcessLookupError:
-            killed = True
-        except Exception as exc:
-            kill_errors.append(f"{candidate_pid}: {exc}")
+        else:
+            kill_errors.append(f"{candidate_pid}: process group did not stop")
 
+    if not candidate_pids:
+        kill_errors.append("worker process not found")
+    if kill_errors:
+        return jsonify({"ok": False, "killed": False, "errors": kill_errors}), 500
     mark_task_cancelled(task_id)
     _record_task_cancellation(task, "comment")
     return jsonify({"ok": True, "killed": killed, "errors": kill_errors})
@@ -1744,13 +1775,37 @@ def api_list_crawl_tasks():
 
 
 def _pid_alive(pid) -> bool:
+    """Return worker liveness while reaping Dashboard-owned zombie children."""
     try:
         if not pid:
             return False
+        try:
+            reaped_pid, _ = os.waitpid(int(pid), os.WNOHANG)
+            if reaped_pid == int(pid):
+                return False
+        except ChildProcessError:
+            pass
         os.kill(int(pid), 0)
         return True
-    except Exception:
-        logger.exception(f"Unhandled exception in _pid_alive()")
+    except (ProcessLookupError, ValueError, TypeError):
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+
+
+def _process_group_alive(pid: int) -> bool:
+    """Check the whole worker process group, not only its wrapper leader."""
+    _pid_alive(pid)
+    try:
+        os.killpg(int(pid), 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except (OSError, ValueError, TypeError):
         return False
 
 
@@ -2209,6 +2264,7 @@ def _launch_crawl_task(task_id):
         "--task-id",
         task_id,
     ]
+    worker = None
     try:
         worker = subprocess.Popen(
             command,
@@ -2220,6 +2276,8 @@ def _launch_crawl_task(task_id):
         )
         set_crawl_worker_pid(task_id, worker.pid)
     except Exception as exc:
+        if worker is not None:
+            _terminate_task_group(worker.pid)
         fail_crawl_task_start(task_id, str(exc))
         if not dry_run:
             abort_launch(task_id, task_config.get("user_data_dir", ""), str(exc))
@@ -2329,10 +2387,76 @@ def _auto_start_once() -> bool:
     return started > 0
 
 
+def _reconcile_dead_workers(now: float = None) -> int:
+    """Recover stale task rows only after their process group is confirmed gone."""
+    from crawl_task_manager import (
+        finish_crawl_task,
+        get_crawl_task,
+        list_crawl_tasks,
+        mark_crawl_task_cancelled,
+    )
+    from task_manager import get_task, list_tasks, mark_task_cancelled, recover_lost_task
+
+    now = time.time() if now is None else float(now)
+    recovered = 0
+    for task_kind, tasks in (
+        ("search", list_crawl_tasks(archived=False)),
+        ("comment", list_tasks(archived=False)),
+    ):
+        for task in tasks:
+            status = task.get("status")
+            if status not in ("starting", "running", "stopping"):
+                continue
+            pid = int(task.get("worker_pid") or 0)
+            started_at = float(task.get("started_at") or task.get("created_at") or now)
+            if pid and _pid_alive(pid):
+                continue
+            if not pid and now - started_at < 120:
+                continue
+            if pid and not _terminate_task_group(pid):
+                continue
+            latest = get_crawl_task(task["id"]) if task_kind == "search" else get_task(task["id"])
+            if not latest or latest.get("status") not in ("starting", "running", "stopping"):
+                continue
+            if status == "stopping":
+                if task_kind == "search":
+                    mark_crawl_task_cancelled(task["id"])
+                else:
+                    mark_task_cancelled(task["id"], "任务进程已停止")
+                _record_task_cancellation(task, task_kind)
+            elif task_kind == "search":
+                finish_crawl_task(task["id"], 1, "worker process disappeared")
+                _record_task_failure(task, task_kind)
+            else:
+                recover_lost_task(task["id"], "worker process disappeared; unfinished posts reset")
+                _record_task_failure(task, task_kind)
+            recovered += 1
+    return recovered
+
+
+def _record_task_failure(task: dict, task_kind: str) -> None:
+    config = _auto_task_config(task)
+    try:
+        runtime_config, _ = bind_task_config(
+            config,
+            account_id=_auto_task_account_id(task),
+            require_enabled=False,
+        )
+        record_completion(
+            task_id=task["id"],
+            task_kind=task_kind,
+            user_data_dir=runtime_config["user_data_dir"],
+            exit_code=1,
+        )
+    except Exception:
+        logger.exception("failed to record lost %s worker %s", task_kind, task.get("id"))
+
+
 def risk_scheduler_loop() -> None:
     while True:
         try:
             with app.app_context():
+                _reconcile_dead_workers()
                 _auto_start_once()
         except Exception:
             logger.exception("[risk-scheduler] scheduler iteration failed")
@@ -2360,14 +2484,11 @@ def api_cancel_crawl_task(task_id):
     killed = False
     kill_errors = []
     if pid:
-        try:
-            os.killpg(int(pid), 15)
-            killed = True
-        except ProcessLookupError:
+        if _terminate_task_group(int(pid)):
             killed = True
             mark_crawl_task_cancelled(task_id)
-        except Exception as exc:
-            kill_errors.append(str(exc))
+        else:
+            kill_errors.append(f"{pid}: process group did not stop")
     if not pid:
         mark_crawl_task_cancelled(task_id)
     elif kill_errors:

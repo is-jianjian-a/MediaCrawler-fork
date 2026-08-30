@@ -26,9 +26,19 @@ sys.path.insert(0, str(DASHBOARD_DIR))
 
 from tools.app_runner import RISK_CONTROL_EXIT_CODE
 try:
-    from dashboard.risk_policy import confirm_launch, launch_lease_heartbeat, record_completion
+    from dashboard.risk_policy import (
+        assert_launch_reserved,
+        confirm_launch,
+        launch_lease_heartbeat,
+        record_completion,
+    )
 except ModuleNotFoundError:
-    from risk_policy import confirm_launch, launch_lease_heartbeat, record_completion  # type: ignore[no-redef]
+    from risk_policy import (  # type: ignore[no-redef]
+        assert_launch_reserved,
+        confirm_launch,
+        launch_lease_heartbeat,
+        record_completion,
+    )
 try:
     from dashboard.account_registry import (
         DEFAULT_ACCOUNT_ID,
@@ -47,7 +57,6 @@ except ModuleNotFoundError:
     from profile_lock import acquire_profile_lock  # type: ignore[no-redef]
 
 from task_manager import (  # noqa: E402
-    claim_task,
     finish_task,
     get_task,
     get_task_posts,
@@ -226,6 +235,17 @@ class CommentTaskExecutor:
     def close(self):
         self.conn.close()
 
+    @staticmethod
+    def _stop_child(process) -> None:
+        if process is None or process.poll() is not None:
+            return
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=2)
+
     def saved_comment_count(self, note_id: str) -> int:
         return self.conn.execute(
             "SELECT COUNT(*) FROM xhs_note_comment WHERE note_id = ?",
@@ -309,11 +329,12 @@ class CommentTaskExecutor:
                 update_post_status(task_id, task_post["note_id"], "pending", before, None, before)
             return True
 
+        process = None
+        terminal_note_ids = set()
         try:
             prepared_by_id = {
                 item[0]["note_id"]: (item[0], item[1]) for item in prepared
             }
-            terminal_note_ids = set()
             process = subprocess.Popen(
                 command,
                 cwd=MEDIACRAWLER_ROOT,
@@ -351,6 +372,7 @@ class CommentTaskExecutor:
                     terminal_note_ids.add(note_id)
             returncode = process.wait()
         except KeyboardInterrupt:
+            self._stop_child(process)
             for task_post, before, _ in prepared:
                 note_id = task_post["note_id"]
                 if note_id in terminal_note_ids:
@@ -361,6 +383,7 @@ class CommentTaskExecutor:
                 )
             raise
         except Exception as exc:
+            self._stop_child(process)
             returncode = 1
             print(f"[crawler-launch-error] {exc}", file=log_file, flush=True)
 
@@ -535,16 +558,14 @@ def main() -> int:
         account_id=args.account_id,
     )
     if not args.dry_run:
-        if task["status"] in ("pending", "completed_with_errors"):
-            claimed, claim_error = claim_task(
-                args.task_id, retry_failed=args.retry_failed
-            )
-            if not claimed:
-                executor.close()
-                parser.error(claim_error)
-        elif task["status"] != "starting":
+        if task["status"] != "starting":
             executor.close()
-            parser.error(f"task is {task['status']}, cannot start")
+            parser.error(f"task is {task['status']}, expected starting")
+        try:
+            assert_launch_reserved(args.task_id, "comment", account["user_data_dir"])
+        except RuntimeError as exc:
+            executor.close()
+            parser.error(str(exc))
         start_task(args.task_id, str(log_path))
     all_ok = True
     interrupted = False

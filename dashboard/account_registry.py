@@ -27,7 +27,7 @@ ACCOUNT_DATA_ROOT = MEDIACRAWLER_ROOT / "database" / "accounts"
 LEGACY_CONTENT_DB = MEDIACRAWLER_ROOT / "database" / "sqlite_tables.db"
 
 DEFAULT_ACCOUNT_ID = os.getenv("MEDIACRAWLER_DEFAULT_XHS_ACCOUNT", "02")
-DEFAULT_USER_DATA_DIR = "%s_user_data_dir_account02"
+DEFAULT_USER_DATA_DIR = f"%s_user_data_dir_account{DEFAULT_ACCOUNT_ID}"
 SYSTEM_CHROME_PATH = Path(
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 )
@@ -303,6 +303,7 @@ def init_account_registry_db() -> None:
         )
         """
     )
+    validate_account_id(DEFAULT_ACCOUNT_ID)
     default_browser = _historical_browser_path(conn, DEFAULT_USER_DATA_DIR)
     try:
         default_browser = validate_browser_path(default_browser)
@@ -318,6 +319,26 @@ def init_account_registry_db() -> None:
         storage_mode="legacy_shared",
         enabled=bool(default_browser),
     )
+    default_row = conn.execute(
+        "SELECT user_data_dir, sqlite_db_path, storage_mode "
+        "FROM xhs_accounts WHERE account_id=?",
+        (DEFAULT_ACCOUNT_ID,),
+    ).fetchone()
+    if not default_row:
+        raise AccountRegistryError(
+            "default account registration conflicted with an existing route"
+        )
+    expected_db = (
+        LEGACY_CONTENT_DB
+        if default_row["storage_mode"] == "legacy_shared"
+        else Path(default_content_db_path(DEFAULT_ACCOUNT_ID))
+    )
+    if (
+        str(default_row["user_data_dir"]).casefold() != DEFAULT_USER_DATA_DIR.casefold()
+        or Path(default_row["sqlite_db_path"]).resolve(strict=False)
+        != expected_db.resolve(strict=False)
+    ):
+        raise AccountRegistryError("default account route does not match configured identity")
     _backfill_task_accounts(conn)
     conn.commit()
     conn.close()
@@ -383,12 +404,14 @@ def validate_account_runtime(account: Dict[str, Any]) -> Dict[str, Any]:
         conn.close()
     for row in rows:
         other = _row_to_account(row)
-        if Path(other["profile_path"]).resolve(strict=False) == profile_path:
+        if str(Path(other["profile_path"]).resolve(strict=False)).casefold() == str(
+            profile_path
+        ).casefold():
             raise AccountRegistryError(
                 f"browser profile conflicts with enabled account {other['account_id']}"
             )
         other_db = Path(other["sqlite_db_path"]).resolve(strict=False)
-        if Path(db_path).resolve(strict=False) == other_db:
+        if str(Path(db_path).resolve(strict=False)).casefold() == str(other_db).casefold():
             raise AccountRegistryError(
                 f"content database conflicts with enabled account {other['account_id']}"
             )
@@ -424,7 +447,8 @@ def create_account(
     try:
         conn.execute("BEGIN IMMEDIATE")
         duplicate = conn.execute(
-            "SELECT account_id FROM xhs_accounts WHERE account_id=? OR user_data_dir=?",
+            "SELECT account_id FROM xhs_accounts "
+            "WHERE lower(account_id)=lower(?) OR lower(user_data_dir)=lower(?)",
             (account_id, profile_template),
         ).fetchone()
         if duplicate:
@@ -438,7 +462,7 @@ def create_account(
                 existing_profile_path = resolve_profile_path(row["user_data_dir"])
             except AccountRegistryError:
                 continue
-            if existing_profile_path == profile_path:
+            if str(existing_profile_path).casefold() == str(profile_path).casefold():
                 raise AccountRegistryError(
                     f"physical browser profile already assigned to account {row['account_id']}"
                 )
@@ -519,6 +543,76 @@ def update_account(
     return get_account(account_id)  # type: ignore[return-value]
 
 
+def migrate_default_account_to_dedicated() -> Dict[str, Any]:
+    """Copy the legacy aggregate to a private working DB, then atomically reroute."""
+    init_account_registry_db()
+    account = get_account(DEFAULT_ACCOUNT_ID)
+    if not account:
+        raise AccountRegistryError(f"account not found: {DEFAULT_ACCOUNT_ID}")
+    if account["storage_mode"] == "dedicated":
+        return account
+
+    source = Path(account["sqlite_db_path"]).resolve(strict=True)
+    destination = Path(default_content_db_path(DEFAULT_ACCOUNT_ID))
+    temp_destination = destination.with_suffix(".migrating.db")
+    conn = _connect()
+    try:
+        active = 0
+        for table_name in ("tasks", "crawl_tasks"):
+            exists = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                (table_name,),
+            ).fetchone()
+            if exists:
+                active += int(
+                    conn.execute(
+                        f"SELECT COUNT(*) FROM {table_name} "
+                        "WHERE account_id=? AND status IN ('starting','running','stopping')",
+                        (DEFAULT_ACCOUNT_ID,),
+                    ).fetchone()[0]
+                )
+        if active:
+            raise AccountRegistryError("default account has an active task")
+    finally:
+        conn.close()
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.exists():
+        raise AccountRegistryError(f"dedicated database already exists: {destination}")
+    if temp_destination.exists():
+        temp_destination.unlink()
+    source_conn = sqlite3.connect(str(source), timeout=30)
+    target_conn = sqlite3.connect(str(temp_destination), timeout=30)
+    try:
+        source_conn.backup(target_conn)
+        integrity = target_conn.execute("PRAGMA integrity_check").fetchone()[0]
+        if integrity != "ok":
+            raise AccountRegistryError(f"copied database failed integrity check: {integrity}")
+    finally:
+        target_conn.close()
+        source_conn.close()
+    os.replace(temp_destination, destination)
+
+    conn = _connect()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        cursor = conn.execute(
+            "UPDATE xhs_accounts SET sqlite_db_path=?, storage_mode='dedicated', "
+            "updated_at=? WHERE account_id=? AND storage_mode='legacy_shared'",
+            (str(destination.resolve(strict=True)), time.time(), DEFAULT_ACCOUNT_ID),
+        )
+        if cursor.rowcount != 1:
+            raise AccountRegistryError("default account route changed during migration")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        destination.unlink(missing_ok=True)
+        raise
+    finally:
+        conn.close()
+    return get_account(DEFAULT_ACCOUNT_ID)  # type: ignore[return-value]
+
+
 def bind_task_config(
     config: Optional[Dict[str, Any]],
     *,
@@ -590,6 +684,10 @@ def main() -> int:
     )
     browser_parser.add_argument("account_id")
     browser_parser.add_argument("browser_path")
+    subparsers.add_parser(
+        "migrate-default",
+        help="Copy the legacy aggregate into the default account's dedicated DB",
+    )
 
     args = parser.parse_args()
     try:
@@ -609,10 +707,12 @@ def main() -> int:
             payload = _public_account(
                 update_account(args.account_id, enabled=args.enabled == "true")
             )
-        else:
+        elif args.command == "set-browser":
             payload = _public_account(
                 update_account(args.account_id, browser_path=args.browser_path)
             )
+        else:
+            payload = _public_account(migrate_default_account_to_dedicated())
     except AccountRegistryError as exc:
         parser.error(str(exc))
     print(json.dumps(payload, ensure_ascii=False, indent=2))

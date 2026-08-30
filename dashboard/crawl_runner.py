@@ -34,9 +34,19 @@ try:
 except ModuleNotFoundError:  # Support direct script execution.
     from rate_policy import DEFAULT_FIRST_LEVEL_COMMENTS, keyword_rate_defaults  # type: ignore[no-redef]
 try:
-    from dashboard.risk_policy import launch_lease_heartbeat, record_completion
+    from dashboard.risk_policy import (
+        assert_launch_reserved,
+        confirm_launch,
+        launch_lease_heartbeat,
+        record_completion,
+    )
 except ModuleNotFoundError:
-    from risk_policy import launch_lease_heartbeat, record_completion  # type: ignore[no-redef]
+    from risk_policy import (  # type: ignore[no-redef]
+        assert_launch_reserved,
+        confirm_launch,
+        launch_lease_heartbeat,
+        record_completion,
+    )
 try:
     from dashboard.account_registry import (
         DEFAULT_ACCOUNT_ID,
@@ -74,6 +84,17 @@ def _validated_start_page(value) -> int:
     if not 1 <= start_page <= MAX_START_PAGE:
         raise ValueError(f"start_page must be between 1 and {MAX_START_PAGE}")
     return start_page
+
+
+def _stop_child(process) -> None:
+    if process is None or process.poll() is not None:
+        return
+    process.terminate()
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=2)
 
 
 def _build_command(task: dict) -> tuple[list[str], dict]:
@@ -186,6 +207,7 @@ def run_task(task_id: str) -> int:
         print(f"crawl task not found: {task_id}", file=sys.stderr)
         return 2
 
+    process = None
     try:
         runtime_config, account = bind_task_config(
             task.get("config") or {},
@@ -198,6 +220,15 @@ def run_task(task_id: str) -> int:
     task = dict(task)
     task["config"] = runtime_config
     task["account_id"] = account["account_id"]
+    if not runtime_config.get("dry_run"):
+        if task.get("status") != "starting":
+            finish_crawl_task(task_id, 1, "worker expected task status starting")
+            return 1
+        try:
+            assert_launch_reserved(task_id, "search", account["user_data_dir"])
+        except RuntimeError as exc:
+            finish_crawl_task(task_id, 1, str(exc))
+            return 1
 
     account_log_dir = LOG_DIR / "accounts" / account["account_id"]
     account_log_dir.mkdir(parents=True, exist_ok=True)
@@ -224,6 +255,7 @@ def run_task(task_id: str) -> int:
                 user_data_dir=account["user_data_dir"],
                 task_id=task_id,
             ):
+                confirm_launch(task_id, account["user_data_dir"])
                 with launch_lease_heartbeat(task_id, account["user_data_dir"]):
                     process = subprocess.Popen(
                         command,
@@ -231,7 +263,6 @@ def run_task(task_id: str) -> int:
                         env=env,
                         stdout=log,
                         stderr=subprocess.STDOUT,
-                        start_new_session=True,
                         text=True,
                     )
                     set_crawl_worker_pid(task_id, process.pid)
@@ -255,6 +286,7 @@ def run_task(task_id: str) -> int:
             )
             return exit_code
     except Exception as exc:
+        _stop_child(process)
         # The task has already transitioned to running above.  Record a terminal
         # failure instead of using the starting-only failure path and leaving a
         # stale running task behind.

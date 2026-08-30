@@ -78,6 +78,30 @@ def test_duplicate_physical_profile_alias_is_rejected(isolated_registry):
         )
 
 
+def test_account_id_case_alias_is_rejected(isolated_registry):
+    registry.create_account(account_id="Research", browser_path=str(isolated_registry))
+    with pytest.raises(registry.AccountRegistryError, match="already registered"):
+        registry.create_account(account_id="research", browser_path=str(isolated_registry))
+
+
+def test_default_legacy_database_migrates_to_private_working_copy(isolated_registry):
+    registry.LEGACY_CONTENT_DB.parent.mkdir(parents=True, exist_ok=True)
+    source = sqlite3.connect(registry.LEGACY_CONTENT_DB)
+    source.execute("CREATE TABLE evidence (value TEXT)")
+    source.execute("INSERT INTO evidence VALUES ('kept')")
+    source.commit()
+    source.close()
+
+    migrated = registry.migrate_default_account_to_dedicated()
+
+    assert migrated["storage_mode"] == "dedicated"
+    assert Path(migrated["sqlite_db_path"]) != registry.LEGACY_CONTENT_DB
+    assert registry.LEGACY_CONTENT_DB.exists()
+    copied = sqlite3.connect(migrated["sqlite_db_path"])
+    assert copied.execute("SELECT value FROM evidence").fetchone()[0] == "kept"
+    copied.close()
+
+
 def test_system_chrome_is_always_rejected(monkeypatch, tmp_path):
     fake_system = tmp_path / "Google Chrome"
     fake_system.write_text("chrome", encoding="utf-8")

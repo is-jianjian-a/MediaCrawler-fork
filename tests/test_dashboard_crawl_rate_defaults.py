@@ -113,6 +113,7 @@ def test_invalid_start_page_is_rejected():
 
 def test_runner_records_risk_control_as_failed(monkeypatch, tmp_path):
     finishes = []
+    popen_kwargs = []
 
     class FakeProcess:
         pid = 12345
@@ -125,6 +126,7 @@ def test_runner_records_risk_control_as_failed(monkeypatch, tmp_path):
         "get_crawl_task",
         lambda _task_id: {
             "id": "crawl-risk",
+            "status": "starting",
             "keywords": ["test"],
             "config": {"get_comments": True},
         },
@@ -136,8 +138,13 @@ def test_runner_records_risk_control_as_failed(monkeypatch, tmp_path):
         "finish_crawl_task",
         lambda *args: finishes.append(args),
     )
-    monkeypatch.setattr(crawl_runner.subprocess, "Popen", lambda *args, **kwargs: FakeProcess())
+    def fake_popen(*args, **kwargs):
+        popen_kwargs.append(kwargs)
+        return FakeProcess()
+
+    monkeypatch.setattr(crawl_runner.subprocess, "Popen", fake_popen)
     monkeypatch.setattr(crawl_runner, "record_completion", lambda **kwargs: None)
+    monkeypatch.setattr(crawl_runner, "assert_launch_reserved", lambda *args: None)
     monkeypatch.setattr(crawl_runner, "confirm_launch", lambda *args: None)
     monkeypatch.setattr(crawl_runner, "acquire_profile_lock", lambda **kwargs: nullcontext())
     monkeypatch.setattr(crawl_runner, "launch_lease_heartbeat", lambda *args: nullcontext())
@@ -151,3 +158,4 @@ def test_runner_records_risk_control_as_failed(monkeypatch, tmp_path):
             "XHS risk control CAPTCHA (HTTP 461/471); task stopped immediately",
         )
     ]
+    assert "start_new_session" not in popen_kwargs[0]

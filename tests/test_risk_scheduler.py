@@ -124,3 +124,101 @@ def test_denied_account_does_not_block_another_account():
         "denied-a",
         "pending-b",
     ]
+
+
+def test_reconciler_recovers_dead_workers_and_releases_both_task_types():
+    search = {
+        "id": "dead-search",
+        "status": "running",
+        "worker_pid": 12001,
+        "started_at": 100.0,
+        "account_id": "A",
+        "config": {"account_id": "A"},
+    }
+    comment = {
+        "id": "dead-comment",
+        "status": "running",
+        "worker_pid": 12002,
+        "started_at": 100.0,
+        "account_id": "B",
+        "config_json": '{"account_id":"B"}',
+    }
+    with (
+        mock.patch("crawl_task_manager.list_crawl_tasks", return_value=[search]),
+        mock.patch("task_manager.list_tasks", return_value=[comment]),
+        mock.patch("crawl_task_manager.get_crawl_task", return_value=search),
+        mock.patch("task_manager.get_task", return_value=comment),
+        mock.patch("crawl_task_manager.finish_crawl_task") as finish_search,
+        mock.patch("task_manager.recover_lost_task") as recover_comment,
+        mock.patch.object(server, "_pid_alive", return_value=False),
+        mock.patch.object(server, "_terminate_task_group", return_value=True) as terminate,
+        mock.patch.object(server, "_record_task_failure") as record_failure,
+    ):
+        assert server._reconcile_dead_workers(now=500.0) == 2
+
+    assert terminate.call_count == 2
+    finish_search.assert_called_once_with(
+        "dead-search", 1, "worker process disappeared"
+    )
+    recover_comment.assert_called_once_with(
+        "dead-comment", "worker process disappeared; unfinished posts reset"
+    )
+    assert record_failure.call_count == 2
+
+
+def test_comment_cancel_does_not_mark_task_cancelled_when_group_survives():
+    task = {
+        "id": "stubborn-comment",
+        "status": "running",
+        "worker_pid": 12003,
+    }
+    with (
+        mock.patch("task_manager.get_task", return_value=task),
+        mock.patch("task_manager.mark_task_cancelled") as mark_cancelled,
+        mock.patch.object(server, "_terminate_task_group", return_value=False),
+        server.app.test_client() as client,
+    ):
+        response = client.post("/api/tasks/stubborn-comment/cancel")
+
+    assert response.status_code == 500
+    assert response.get_json()["killed"] is False
+    mark_cancelled.assert_not_called()
+
+
+def test_search_cancel_restores_running_state_when_group_survives():
+    task = {
+        "id": "stubborn-search",
+        "status": "running",
+        "worker_pid": 12004,
+    }
+    with (
+        mock.patch("crawl_task_manager.get_crawl_task", return_value=task),
+        mock.patch("crawl_task_manager.request_crawl_task_stop", return_value=(True, "")),
+        mock.patch("crawl_task_manager.clear_crawl_task_stop_request") as clear_stop,
+        mock.patch("crawl_task_manager.mark_crawl_task_cancelled") as mark_cancelled,
+        mock.patch.object(server, "_terminate_task_group", return_value=False),
+        server.app.test_client() as client,
+    ):
+        response = client.post("/api/crawl-tasks/stubborn-search/cancel")
+
+    assert response.status_code == 500
+    assert response.get_json()["killed"] is False
+    clear_stop.assert_called_once()
+    mark_cancelled.assert_not_called()
+
+
+def test_pid_alive_reaps_finished_dashboard_child():
+    with (
+        mock.patch.object(server.os, "waitpid", return_value=(12005, 0)),
+        mock.patch.object(server.os, "kill") as kill,
+    ):
+        assert server._pid_alive(12005) is False
+    kill.assert_not_called()
+
+
+def test_process_group_alive_detects_child_after_wrapper_exit():
+    with (
+        mock.patch.object(server, "_pid_alive", return_value=False),
+        mock.patch.object(server.os, "killpg", return_value=None),
+    ):
+        assert server._process_group_alive(12006) is True

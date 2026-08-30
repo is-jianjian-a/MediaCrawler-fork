@@ -363,6 +363,7 @@ class CommentFetcherTests(unittest.TestCase):
 
         self.assertTrue(ok)
         popen.assert_called_once()
+        self.assertNotIn("start_new_session", popen.call_args.kwargs)
         command = popen.call_args.args[0]
         specified_urls = command[command.index("--specified_id") + 1]
         self.assertIn("note-1", specified_urls)
@@ -425,6 +426,7 @@ class CommentFetcherTests(unittest.TestCase):
                 ),
                 mock.patch.object(comment_fetcher, "update_post_status", side_effect=fake_update),
                 mock.patch.object(comment_fetcher, "record_completion"),
+                mock.patch.object(comment_fetcher, "assert_launch_reserved"),
                 mock.patch.object(comment_fetcher, "confirm_launch"),
                 mock.patch.object(
                     comment_fetcher, "acquire_profile_lock", return_value=nullcontext()

@@ -1,6 +1,6 @@
 # 小红书多账号隔离并行运行
 
-更新日期：2026-08-29
+更新日期：2026-08-30
 
 Dashboard 现在把“小红书账号”作为一级运行单元。目标是让不同账号可以同时处理各自的搜索或评论队列，同时把登录态、内容写入、日志、风控和故障尽可能限制在单个账号内。这里的多账号能力用于管理用户已合法登录的账号，不会自动轮换账号来规避验证码或平台风控。
 
@@ -54,7 +54,8 @@ Dashboard 现在把“小红书账号”作为一级运行单元。目标是让�
 
 ## 历史数据迁移
 
-- 账号 `02` 继续读取历史 `database/sqlite_tables.db`，标记为 `legacy_shared`，保证旧 Dashboard 数据可见。
+- 首次升级时账号 `02` 先以 `legacy_shared` 读取历史 `database/sqlite_tables.db`；确认无活跃任务后，运行 `.venv/bin/python dashboard/account_registry.py migrate-default`，通过 SQLite 在线备份生成 `database/accounts/02/sqlite_tables.db`，完整性校验通过后再原子切换注册表。
+- 迁移只复制并改写账号路由，不移动、不改写、不删除原历史汇总库；原库继续作为回滚和跨账号历史审计源，不能再作为新任务的并行写入目标。
 - 能从历史任务 Profile 明确识别的账号会回填到任务的 `account_id`。
 - 缺失或无法识别 Profile 的历史任务标记为 `legacy-default` 或 `legacy-<hash>`，不会猜成账号 `02`。
 - 除默认兼容账号外，历史共享库账号默认禁用；必须建立 dedicated 账号路由后才可参与并行。
@@ -70,9 +71,9 @@ Dashboard 现在把“小红书账号”作为一级运行单元。目标是让�
 - A cooldown 或 461/471 不改变 B 的状态、探针计数或启动预算。
 - 父进程故意提供错误账号、Profile、数据库、浏览器和 CDP 环境时，worker 仍使用注册表路由。
 - 同一 Profile 的字符串别名注册失败；同 Profile 的两个进程只有一个能拿到文件锁。
-- worker 心跳延长 lease；旧任务的迟到完成不能释放新 owner；取消只释放被取消任务。
+- worker 心跳延长 lease；旧任务的迟到完成不能释放新 owner；取消只释放被取消任务；wrapper 异常退出后会回收进程组和调度槽。
 - 锁住 A 的内容库后，B 的内容库仍可写；A/B 的 runtime 日志路径不同。
-- 旧任务回填 unknown 而不是默认猜号；默认历史库仍可读取。
+- 旧任务回填 unknown 而不是默认猜号；账号 `02` 的 working copy 与原历史库都通过完整性校验。
 
 测试命令：
 

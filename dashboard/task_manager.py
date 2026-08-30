@@ -309,15 +309,18 @@ def complete_task(task_id: str):
 
 
 def start_task(task_id: str, log_path: str = None):
-    """Mark a task as running."""
+    """Atomically transition a claimed task from starting to running."""
     conn = _connect()
-    conn.execute(
+    cursor = conn.execute(
         """UPDATE tasks SET status = 'running', started_at = ?, log_path = ?,
-           error_message = NULL WHERE id = ?""",
+           error_message = NULL WHERE id = ? AND status = 'starting'""",
         (time.time(), log_path, task_id),
     )
+    changed = cursor.rowcount
     conn.commit()
     conn.close()
+    if changed != 1:
+        raise RuntimeError("task is no longer in starting state")
 
 
 def set_task_worker_pid(task_id: str, pid: int):
@@ -377,6 +380,26 @@ def fail_task_start(task_id: str, error: str):
     )
     conn.commit()
     conn.close()
+
+
+def recover_lost_task(task_id: str, error: str) -> None:
+    """Return unfinished comment work to pending after its worker disappears."""
+    conn = _connect()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute(
+            "UPDATE task_posts SET status='pending', error_message=? "
+            "WHERE task_id=? AND status='running'",
+            (error, task_id),
+        )
+        conn.execute(
+            "UPDATE tasks SET status='pending', worker_pid=NULL, error_message=? "
+            "WHERE id=? AND status IN ('starting','running')",
+            (error, task_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def reset_failed_posts(task_id: str) -> tuple[bool, str]:
@@ -446,7 +469,7 @@ def mark_task_cancelled(task_id: str, error: str = "cancelled by dashboard"):
            completed_posts = ?, failed_posts = ?, total_comments_added = ?,
            exit_code = 130, stop_requested_at = ?,
            stop_source = 'dashboard_api', stop_reason = ?
-           WHERE id = ? AND status IN ('starting', 'running')""",
+           WHERE id = ? AND status IN ('starting', 'running', 'stopping')""",
         (
             time.time(), error, completed, failed, comments_added,
             time.time(), error, task_id,
