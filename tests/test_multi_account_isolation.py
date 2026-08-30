@@ -1,7 +1,10 @@
 """Cross-account worker routing tests; no browser or network is started."""
 
+import sqlite3
 from pathlib import Path
 from unittest import mock
+
+import pytest
 
 from dashboard.comment_fetcher import CommentTaskExecutor
 from dashboard.crawl_runner import _build_command
@@ -148,3 +151,35 @@ def test_profile_busy_response_is_safe_and_does_not_reserve_launch():
     assert payload["profile_in_use"] is True
     assert payload["owner_pid"] == 123
     assert "private-lock" not in str(payload)
+
+
+def test_legacy_content_route_is_opened_read_only(monkeypatch, tmp_path):
+    legacy_db = tmp_path / "legacy.db"
+    conn = sqlite3.connect(legacy_db)
+    conn.execute("CREATE TABLE evidence (value TEXT)")
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(server, "_crawler_db_path", str(legacy_db))
+
+    conn = server._with_crawler_db()
+    try:
+        with pytest.raises(sqlite3.OperationalError, match="readonly"):
+            conn.execute("INSERT INTO evidence VALUES ('unexpected')")
+    finally:
+        conn.close()
+
+
+def test_index_maintenance_skips_disabled_legacy_routes():
+    enabled = {"account_id": "A", "enabled": True}
+    disabled = {"account_id": "legacy-default", "enabled": False}
+    connection = mock.MagicMock()
+    connection.execute.return_value.fetchone.return_value = None
+    with (
+        mock.patch.object(server, "list_accounts", return_value=[enabled]) as accounts,
+        mock.patch.object(server, "_with_crawler_db", return_value=connection) as connect,
+    ):
+        server.ensure_crawler_db_indexes()
+
+    accounts.assert_called_once_with(include_disabled=False)
+    connect.assert_called_once_with("A", writable=True)
+    connection.close.assert_called_once()

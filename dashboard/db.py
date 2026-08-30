@@ -12,6 +12,7 @@ import re
 import sqlite3
 import sys
 import time
+from pathlib import Path
 
 # Ensure MediaCrawler root is on sys.path so config imports work
 MEDIACRAWLER_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -36,10 +37,15 @@ def get_crawler_db_path(account: str = None) -> str:
     return SQLITE_DB_PATH
 
 
-def _connect(db_path: str) -> sqlite3.Connection:
-    conn = sqlite3.connect(db_path, timeout=10)
+def _connect(db_path: str, *, read_only: bool = False) -> sqlite3.Connection:
+    if read_only:
+        uri = Path(db_path).resolve(strict=True).as_uri() + "?mode=ro"
+        conn = sqlite3.connect(uri, timeout=10, uri=True)
+    else:
+        conn = sqlite3.connect(db_path, timeout=10)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
+    if not read_only:
+        conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=10000")
     return conn
 

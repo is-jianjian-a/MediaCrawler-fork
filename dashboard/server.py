@@ -357,7 +357,7 @@ except FileNotFoundError as e:
     logger.warning(f"No crawler DB found: {e}")
 
 
-def _with_crawler_db(account_id: str = ""):
+def _with_crawler_db(account_id: str = "", *, writable: bool = False):
     """Return an account-routed content DB connection, or None when absent."""
     selected_account = str(account_id or "").strip()
     if not selected_account and has_request_context():
@@ -373,13 +373,13 @@ def _with_crawler_db(account_id: str = ""):
             return None
     if not db_path or not os.path.exists(db_path):
         return None
-    return _connect(db_path)
+    return _connect(db_path, read_only=not writable)
 
 
 def ensure_crawler_db_indexes():
     """Create lightweight indexes needed by dashboard read queries."""
-    for account in list_accounts():
-        conn = _with_crawler_db(account["account_id"])
+    for account in list_accounts(include_disabled=False):
+        conn = _with_crawler_db(account["account_id"], writable=True)
         if not conn:
             continue
         try:
