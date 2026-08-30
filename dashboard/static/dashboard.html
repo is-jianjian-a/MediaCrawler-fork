@@ -88,6 +88,9 @@ body {
 }
 
 .num, .kpi-value, table td, .metric { font-variant-numeric: tabular-nums; }
+.kpi.kpi-action { appearance:none; width:100%; text-align:left; font:inherit; color:inherit; cursor:pointer; }
+.kpi.kpi-action:hover { transform:translateY(-2px); border-color:var(--border-strong); box-shadow:var(--shadow-sm); }
+.kpi.kpi-action:focus-visible { outline:3px solid var(--brand-soft); border-color:var(--brand); }
 
 /* ---------- shell ---------- */
 .wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 var(--pad) 64px; }
@@ -426,8 +429,12 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
 .task-name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .task-id { font-size: 10px; color: var(--text-3); font-family: 'SF Mono', ui-monospace, monospace; }
 .task-meta { font-size: 11px; color: var(--text-3); display: flex; gap: 14px; flex-wrap: wrap; }
-.task-prog-track { height: 5px; background: var(--surface-sunken); border-radius: 999px; overflow: hidden; margin-top: 8px; }
-.task-prog-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--brand), #ff5a72); transition: width .5s; }
+.task-prog-track { height: 5px; display:flex; background: var(--surface-sunken); border-radius: 999px; overflow: hidden; margin-top: 8px; }
+.task-prog-fill { height: 100%; transition: width .5s; }
+.task-prog-fill.success { background:var(--green); }
+.task-prog-fill.failed { background:var(--red); }
+.task-guidance { margin-top:8px; padding:7px 9px; border-radius:var(--r-sm); background:var(--surface-2); color:var(--text-2); font-size:11px; line-height:1.45; }
+.task-guidance.attention { background:var(--amber-soft); color:#92400e; }
 /* task grouping */
 .task-group-head { display: flex; align-items: center; gap: 8px; margin: 14px 2px 6px; padding-top: 6px; font-size: 12px; font-weight: 700; color: var(--text-2); }
 .task-group-head:first-child { margin-top: 0; }
@@ -458,7 +465,7 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
 .task-detail-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; margin-bottom: 14px; }
 .task-detail-title { font-size: 15px; font-weight: 750; letter-spacing: -0.01em; }
 .task-detail-sub { margin-top: 3px; color: var(--text-3); font-size: 11px; }
-.task-stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 14px; }
+.task-stat-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(90px,1fr)); gap: 8px; margin-bottom: 14px; }
 .task-stat { padding: 10px 11px; border: 1px solid var(--border); background: var(--surface-2); border-radius: var(--r-sm); }
 .task-stat .v { font-size: 18px; font-weight: 750; line-height: 1.1; }
 .task-stat .k { font-size: 10px; color: var(--text-3); margin-top: 3px; }
@@ -478,6 +485,19 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
 .task-log-head { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; border-bottom: 1px solid rgba(255,255,255,.10); font-size: 11px; color: #cbd5e1; background:#111827; }
 .task-log-content { max-height: 260px; overflow-y: auto; overscroll-behavior: contain; padding: 11px 12px; font-family: 'SF Mono', ui-monospace, Menlo, monospace; font-size: 11px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; background:#0b1020; color:#f8fafc; }
 @media(max-width:980px){ .task-workbench{ grid-template-columns: 1fr; } .task-list{ border-right: none; border-bottom: 1px solid var(--hairline); } .task-detail{ max-height: none; } }
+
+/* operations overview — one glance before entering task details */
+.operations-overview { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; margin-bottom:10px; }
+.operations-item { appearance:none; text-align:left; border:1px solid var(--border); border-radius:var(--r-sm); background:var(--surface); padding:10px 12px; color:var(--text); cursor:pointer; transition:border-color .12s,box-shadow .12s,transform .12s; }
+.operations-item:hover { border-color:var(--border-strong); box-shadow:var(--shadow-xs); transform:translateY(-1px); }
+.operations-item .op-label { display:flex; align-items:center; gap:6px; color:var(--text-3); font-size:10px; font-weight:700; letter-spacing:.03em; }
+.operations-item .op-dot { width:7px; height:7px; border-radius:50%; background:var(--text-4); }
+.operations-item.running .op-dot { background:var(--green); box-shadow:0 0 0 4px var(--green-soft); }
+.operations-item.attention .op-dot { background:var(--red); box-shadow:0 0 0 4px var(--red-soft); }
+.operations-item.pending .op-dot { background:var(--amber); box-shadow:0 0 0 4px var(--amber-soft); }
+.operations-item .op-value { margin-top:5px; font-size:17px; font-weight:760; line-height:1.15; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.operations-item .op-foot { margin-top:3px; color:var(--text-3); font-size:10px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+@media(max-width:800px){ .operations-overview{ grid-template-columns:repeat(2,1fr); } }
 
 /* keyword crawl task workbench — list is the navigation, details are the workspace */
 .crawl-builder { display:grid; grid-template-columns:minmax(330px, 370px) minmax(0,1fr); min-height:610px; height:min(720px,calc(100vh - 250px)); background:var(--surface); }
@@ -513,6 +533,8 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
 .keyword-textarea { width: 100%; min-height: 112px; resize: vertical; border: 1px solid var(--border); border-radius: var(--r-sm); padding: 9px 10px; font: inherit; font-size: 12px; line-height: 1.55; background: var(--surface); color: var(--text); }
 .keyword-textarea:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-soft); }
 .crawl-summary { font-size: 11px; color: var(--text-3); display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
+.crawl-plan-preview { margin-top:14px; padding:11px 12px; border:1px solid var(--border); border-left:3px solid var(--blue); border-radius:var(--r-sm); background:var(--blue-soft); color:var(--text-2); font-size:11px; line-height:1.6; }
+.crawl-plan-preview strong { color:var(--text); }
 .crawl-task-item { padding:10px; border-radius:var(--r); border:1px solid var(--border); cursor:pointer; background:var(--surface); margin-bottom:7px; transition:all .12s; }
 .crawl-task-item:hover { border-color: var(--border); box-shadow: var(--shadow-xs); }
 .crawl-task-item.active { border-color: var(--brand-border); box-shadow:0 8px 24px rgba(255,36,66,.08); background:linear-gradient(180deg,#fff,var(--brand-soft)); }
@@ -769,50 +791,56 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
   <!-- ============ KPI ============ -->
   <div class="section view-monitor asset-kpis">
     <div class="kpi-grid">
-      <div class="kpi accent-red">
+      <button type="button" class="kpi kpi-action accent-red" onclick="focusAssetQueue('all')" title="查看当前范围全部候选帖子">
         <span class="kpi-accent"></span>
         <div class="kpi-label"><span class="kpi-ico" style="color:var(--brand)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg></span>可分析帖子</div>
         <div class="kpi-value" id="kpiPosts">--</div>
         <div class="kpi-foot" id="kpiPostsFoot">--</div>
-      </div>
-      <div class="kpi accent-purple">
+      </button>
+      <button type="button" class="kpi kpi-action accent-purple" onclick="focusAssetQueue('discussed')" title="只看已有库内评论的帖子">
         <span class="kpi-accent"></span>
         <div class="kpi-label"><span class="kpi-ico" style="color:var(--purple)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg></span>有评论帖子</div>
         <div class="kpi-value" id="kpiComments">--</div>
         <div class="kpi-foot" id="kpiCommentsFoot">评论覆盖率 --</div>
-      </div>
-      <div class="kpi accent-blue">
+      </button>
+      <button type="button" class="kpi kpi-action accent-blue" onclick="focusAssetQueue('high')" title="只看评分不低于 60 的帖子">
         <span class="kpi-accent"></span>
         <div class="kpi-label"><span class="kpi-ico" style="color:var(--blue)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg></span>高价值帖子</div>
         <div class="kpi-value" id="kpiSpeed">--</div>
-        <div class="kpi-foot">评分 ≥ 60，可优先深入</div>
-      </div>
-      <div class="kpi accent-cyan">
+        <div class="kpi-foot">评分 ≥ 60 · 点击筛选</div>
+      </button>
+      <button type="button" class="kpi kpi-action accent-cyan" onclick="focusAssetQueue('gaps')" title="只看平台讨论较多但库内评论不足的帖子">
         <span class="kpi-accent"></span>
         <div class="kpi-label"><span class="kpi-ico" style="color:var(--cyan)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></span>评论补全机会</div>
         <div class="kpi-value" id="kpiEmpty">--</div>
-        <div class="kpi-foot">平台≥10评且库内不足10评</div>
-      </div>
-      <div class="kpi accent-green">
+        <div class="kpi-foot">平台≥10评且库内不足10评 · 点击处理</div>
+      </button>
+      <button type="button" class="kpi kpi-action accent-green" onclick="focusAssetQueue('multi')" title="只看被多个关键词命中的帖子">
         <span class="kpi-accent"></span>
         <div class="kpi-label"><span class="kpi-ico" style="color:var(--green)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg></span>多词命中</div>
         <div class="kpi-value" id="kpiProgress">--</div>
         <div class="kpi-foot" id="kpiProgressFoot">--</div>
-      </div>
-      <div class="kpi accent-amber">
+      </button>
+      <button type="button" class="kpi kpi-action accent-amber" onclick="focusAssetQueue('zero')" title="只看库内尚无评论的帖子">
         <span class="kpi-accent"></span>
         <div class="kpi-label"><span class="kpi-ico" style="color:var(--amber)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>零评论帖子</div>
         <div class="kpi-value" id="kpiZeroCmt">--</div>
         <div class="kpi-foot" id="kpiZeroCmtFoot">--</div>
-      </div>
+      </button>
     </div>
   </div>
 
   <!-- ============ ACTIVE CRAWL TASK ============ -->
   <div class="section view-tasks">
     <div class="section-head">
-      <div class="section-title">当前抓帖任务 <span class="tag">任务中心</span></div>
-      <div class="section-sub">这里核验抓帖进程、关键词和入库；评论任务运行态见下方“评论补全任务”</div>
+      <div class="section-title">运行与待处理 <span class="tag">任务中心</span></div>
+      <div class="section-sub">先看系统真相，再进入抓帖或评论任务处理</div>
+    </div>
+    <div class="operations-overview" id="operationsOverview">
+      <button class="operations-item running" onclick="focusOperations('running')"><span class="op-label"><span class="op-dot"></span>正在运行</span><span class="op-value" id="opRunning">--</span><span class="op-foot" id="opRunningFoot">抓帖与评论任务</span></button>
+      <button class="operations-item attention" onclick="focusOperations('crawl_attention')"><span class="op-label"><span class="op-dot"></span>抓帖异常</span><span class="op-value" id="opCrawlAttention">--</span><span class="op-foot" id="opCrawlAttentionFoot">风控或启动失败</span></button>
+      <button class="operations-item attention" onclick="focusOperations('comment_attention')"><span class="op-label"><span class="op-dot"></span>评论待处理</span><span class="op-value" id="opCommentAttention">--</span><span class="op-foot" id="opCommentAttentionFoot">失败、部分失败或待启动</span></button>
+      <button class="operations-item pending" onclick="manualRefresh()"><span class="op-label"><span class="op-dot"></span>最近入库</span><span class="op-value" id="opLastIngest">--</span><span class="op-foot">点击刷新所有状态</span></button>
     </div>
     <div class="card active-task-card" id="activeTaskCard">
       <div class="active-task-head">
@@ -978,12 +1006,12 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
           </div>
         </div>
         <div class="worth-bulkbar" id="worthBulkbar" style="display:none">
-          <span class="bulk-label">批量选择</span>
+          <span class="bulk-label">按关键词筛选</span>
           <div class="bulk-chips" id="worthKeywordChips"></div>
           <span class="bulk-sep"></span>
           <span class="bulk-inline">分数≥</span>
           <input class="input input-sm" id="worthMinScore" type="number" min="0" max="100" value="60" style="width:60px">
-          <button class="btn btn-sm" onclick="selectByMinScore()">全选</button>
+          <button class="btn btn-sm" onclick="applyWorthFilters()">筛选</button>
           <button class="btn btn-sm btn-ghost" onclick="deselectAllWorth()">清空</button>
         </div>
         <div class="task-composer" id="taskComposer">
@@ -1200,7 +1228,7 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
                   <select class="select" id="crawlKeywordGroupSelect" onchange="applyCrawlKeywordGroup()">
                     <option value="">加载中…</option>
                   </select>
-                  <div class="field-help">默认使用 Flu-HW：华为/华为手机 × 流畅/性能/卡顿/丝滑/稳定。</div>
+                  <div class="field-help">首次打开会使用当前数据范围关键词组；你也可以切换组或直接编辑关键词。</div>
                 </div>
                 <div class="field">
                   <label>组内关键词数</label>
@@ -1220,7 +1248,7 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
               <div class="composer-grid common">
                 <div class="field">
                   <label>任务名称</label>
-                  <input class="input" id="crawlTaskName" type="text" maxlength="80" value="fluency-lag-fresh-since-2026-06-10">
+                  <input class="input" id="crawlTaskName" type="text" maxlength="80" placeholder="例如：地铁入口问题-从新到旧-2026-08-30">
                   <div class="field-help">用于任务列表识别，建议包含主题和日期。</div>
                 </div>
                 <div class="field">
@@ -1230,12 +1258,12 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
                 </div>
                 <div class="field">
                   <label>发布日期之后入库</label>
-                  <input class="input" id="crawlDateAfter" type="date" value="2026-06-10">
+                  <input class="input" id="crawlDateAfter" type="date">
                   <div class="field-help">只保存该日期之后发布的小红书笔记。</div>
                 </div>
                 <div class="field">
                   <label id="crawlMaxCountLabel">每词新增上限</label>
-                  <input class="input" id="crawlMaxCount" type="number" min="0" max="200000" value="0">
+                  <input class="input" id="crawlMaxCount" type="number" min="0" max="200000" value="100">
                   <div class="field-help" id="crawlMaxCountHelp">0 表示不按数量限制；N 表示搜索结果达到 N 个帖子就停止。</div>
                 </div>
                 <div class="field">
@@ -1262,8 +1290,8 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
                 </div>
                 <div class="field">
                   <label>主题标签</label>
-                  <input class="input" id="crawlTopic" type="text" value="fluency_lag">
-                  <div class="field-help">写入任务配置，方便之后区分流畅/卡顿任务。</div>
+                  <input class="input" id="crawlTopic" type="text" placeholder="默认使用关键词组名称">
+                  <div class="field-help">写入任务配置，方便之后按研究主题查找任务。</div>
                 </div>
               </div>
             </div>
@@ -1377,6 +1405,7 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
               </div>
             </div>
 
+            <div class="crawl-plan-preview" id="crawlPlanPreview">选择关键词后，这里会显示本次任务的执行预览。</div>
             <div class="composer-actions">
               <span class="composer-note">流程：选词 → 创建 pending 任务 → 右侧人工确认 → 启动。</span>
               <button class="btn btn-primary" onclick="submitCrawlTask()">创建抓帖任务</button>
@@ -1444,11 +1473,12 @@ table.tbl tbody tr:hover { background: var(--surface-2); }
    State & helpers
    ============================================================ */
 let trendChart=null, postRateChart=null, commentRateChart=null, autoRefresh=true;
-let _worthPosts=[], _groups=[], _activeGroup=null, _sourceKeys=[], _historyMinutes=180, _velocityMinutes=180;
+let _worthPosts=[], _worthPresetFilter='high', _groups=[], _activeGroup=null, _sourceKeys=[], _historyMinutes=180, _velocityMinutes=180;
 let _taskDraftPosts=[], _selectedTaskId='', _commentTaskView='attention', _activeKwChips=new Set();
 let _crawlPresets=[], _crawlKeywordGroups=[], _crawlTasks=[], _selectedCrawlKeywords=new Set(), _selectedCrawlTaskId='', _showArchivedCrawlTasks=false, _crawlWorkspaceView='detail';
 let _xhsAccounts=[], _defaultXhsAccount='02';
 let _crawlMode='standard';
+let _commentTasks=[], _operationsCrawlTasks=[], _lastIngestTs=0;
 
 const C = {
   posts:'#ff2442', comments:'#8b5cf6', blue:'#3b82f6', cyan:'#06b6d4',
@@ -1481,7 +1511,8 @@ function renderXhsAccountSelects(){
   const enabled=_xhsAccounts.filter(account=>account.enabled);
   const options=enabled.map(account=>{
     const mode=account.storage_mode==='dedicated'?'独立库':'历史共享库';
-    return `<option value="${escapeHtml(account.account_id)}">${escapeHtml(account.display_name)} · ${mode}</option>`;
+    const occupied=account.profile_in_use?' · 登录窗口占用':'';
+    return `<option value="${escapeHtml(account.account_id)}">${escapeHtml(account.display_name)} · ${mode}${occupied}</option>`;
   }).join('');
   ['worthAccountSelect','taskAccountSelect','crawlAccountSelect'].forEach(id=>{
     const select=document.getElementById(id);
@@ -1533,6 +1564,52 @@ function setVerdict(color, text){
   pill.className='verdict-pill '+color;
   document.getElementById('verdictText').textContent=text;
 }
+function isRiskControlTask(task){
+  return Number(task?.exit_code)===75 || /risk control|captcha|http 461|http 471|风控/i.test(task?.error_message||'');
+}
+function operationsSnapshot(){
+  const crawlRunning=_operationsCrawlTasks.filter(t=>['starting','running','stopping'].includes(t.status));
+  const commentRunning=_commentTasks.filter(t=>['starting','running','stopping'].includes(t.status));
+  const crawlAttention=_operationsCrawlTasks.filter(t=>t.status==='failed'&&!['主动停止'].includes(crawlStatusLabel(t.status,t.exit_code,t.error_message)));
+  const commentAttention=_commentTasks.filter(t=>['pending','failed','completed_with_errors'].includes(t.status)&&!commentTaskWasCancelled(t));
+  return {crawlRunning,commentRunning,crawlAttention,commentAttention};
+}
+function renderOperationsOverview(){
+  const snap=operationsSnapshot();
+  const running=snap.crawlRunning.length+snap.commentRunning.length;
+  const risks=snap.crawlAttention.filter(isRiskControlTask).length;
+  document.getElementById('opRunning').textContent=running+' 个';
+  document.getElementById('opRunningFoot').textContent=`抓帖 ${snap.crawlRunning.length} · 评论 ${snap.commentRunning.length}`;
+  document.getElementById('opCrawlAttention').textContent=snap.crawlAttention.length+' 项';
+  document.getElementById('opCrawlAttentionFoot').textContent=risks?`${risks} 项风控停止`:'没有风控或运行失败';
+  document.getElementById('opCommentAttention').textContent=snap.commentAttention.length+' 项';
+  document.getElementById('opCommentAttentionFoot').textContent=snap.commentAttention.length?'需要启动、重试或收起':'当前无需处理';
+  document.getElementById('opLastIngest').textContent=_lastIngestTs?fmtGap(_lastIngestTs):'--';
+  const totalAttention=snap.crawlAttention.length+snap.commentAttention.length;
+  if(running>0) setVerdict('ok',running+' 个任务运行中');
+  else if(totalAttention>0) setVerdict(risks?'error':'warning',totalAttention+' 项需要处理');
+  else setVerdict('ok','当前无运行任务');
+}
+function focusOperations(kind){
+  switchMainView('tasks');
+  if(kind==='comment_attention'){
+    switchTab('task');
+    switchCommentTaskView('attention');
+    return;
+  }
+  switchTab('crawl');
+  if(kind==='crawl_attention'){
+    const filter=document.getElementById('crawlTaskStatusFilter');
+    if(filter) filter.value='failed';
+    renderCrawlTaskList();
+  }else{
+    const snap=operationsSnapshot();
+    if(!snap.crawlRunning.length&&snap.commentRunning.length){
+      switchTab('task');
+      switchCommentTaskView('attention');
+    }
+  }
+}
 function containWheelScroll(el){
   if(!el||el.dataset.scrollContained==='1') return;
   el.dataset.scrollContained='1';
@@ -1574,13 +1651,9 @@ async function updateStats(){
   const s=await fetchJSON('/api/stats');
   const st=s.stats, p=s.process;
 
-  let verdictText=String(s.verdict||'状态未知').replace(/^[🟢🟡🔴]\s*/,'');
-  let verdictColor=s.verdict_color;
-  if(verdictText==='cancelled'){
-    verdictText='当前无运行中的抓帖任务';
-    verdictColor='ok';
-  }
-  setVerdict(verdictColor, verdictText);
+  _lastIngestTs=Math.max(Number(st.last_crawl_ts||0),Number(st.global_last_crawl_ts||0));
+  if(_lastIngestTs>20000000000) _lastIngestTs=Math.floor(_lastIngestTs/1000);
+  renderOperationsOverview();
 
   const dw=document.getElementById('dbWarn');
   if(s.db_size_warning){ dw.classList.add('show'); dw.textContent='⚠ dashboard.db '+s.db_size_mb+'MB'; }
@@ -2207,7 +2280,7 @@ async function loadWorthDigging(){
     tb.innerHTML='<tr><td colspan="7" class="empty"><div class="em-ico"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/></svg></div>暂无帖子</td></tr>';
   }else{
     tb.innerHTML=_worthPosts.map((p,i)=>{
-      const checked=(i<20&&p.worth_score>=60)?'checked':'';
+      const checked='';
       const sCls=p.worth_score>=80?'hi':(p.worth_score>=60?'mid':'');
       const pct=Math.round((p.db_comment_count||0)/Math.max(p.comment_count,1)*100);
       const st = p.db_comment_count===0?'<span style="color:var(--red);font-weight:600">0%</span>':(pct<5?'<span style="color:var(--amber);font-weight:600">'+pct+'%</span>':'<span style="color:var(--green);font-weight:600">'+pct+'%</span>');
@@ -2215,7 +2288,7 @@ async function loadWorthDigging(){
       const titleShort=title.length>46?title.substring(0,46)+'…':title;
       const matchedKeywords=(p.keywords&&p.keywords.length)?p.keywords:[p.source_keyword||''];
       const keywordLabel=matchedKeywords.filter(Boolean).join('、');
-      return `<tr>
+      return `<tr data-worth-row="${i}">
         <td style="text-align:center"><input type="checkbox" class="worth-check" data-idx="${i}" data-note="${escapeHtml(p.note_id||'')}" data-kw="${escapeHtml(keywordLabel)}" ${checked} onchange="updateWorthCount()"></td>
         <td><span class="chip-score ${sCls}">${p.worth_score}</span></td>
         <td title="${escapeHtml(p.title||'')}" style="max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(titleShort)}</td>
@@ -2229,20 +2302,23 @@ async function loadWorthDigging(){
   updateWorthCount();
   document.getElementById('worthBulkbar').style.display = _worthPosts.length? 'flex':'none';
   buildKeywordChips();
-  document.getElementById('worthStatus').textContent='共 '+_worthPosts.length+' 帖 · 高价值 '+(data.high_priority||0);
+  applyWorthFilters();
 }
 function updateWorthCount(){
   const checked=document.querySelectorAll('.worth-check:checked').length;
   const total=_worthPosts.length;
-  document.getElementById('worthStatus').innerHTML='已选 <b>'+checked+'</b> / '+total+' 帖';
-  document.getElementById('worthSelectAll').checked=checked===total&&total>0;
+  const visible=document.querySelectorAll('#worthBody tr[data-worth-row]:not([hidden])').length;
+  const label={all:'全部候选',discussed:'已有评论',high:'高价值',gaps:'评论补全机会',multi:'多词命中',zero:'零评论'}[_worthPresetFilter]||'当前筛选';
+  document.getElementById('worthStatus').innerHTML=`${escapeHtml(label)} ${visible} 帖 · 已选 <b>${checked}</b>`;
+  const visibleChecks=[...document.querySelectorAll('#worthBody tr[data-worth-row]:not([hidden]) .worth-check')];
+  document.getElementById('worthSelectAll').checked=visibleChecks.length>0&&visibleChecks.every(c=>c.checked);
 }
 function toggleSelectAllWorth(){
   const allChecked=document.getElementById('worthSelectAll').checked;
-  document.querySelectorAll('.worth-check').forEach(c=>c.checked=allChecked);
+  document.querySelectorAll('#worthBody tr[data-worth-row]:not([hidden]) .worth-check').forEach(c=>c.checked=allChecked);
   updateWorthCount();
 }
-function selectAllWorth(){ document.querySelectorAll('.worth-check').forEach(c=>c.checked=true); updateWorthCount(); }
+function selectAllWorth(){ document.querySelectorAll('#worthBody tr[data-worth-row]:not([hidden]) .worth-check').forEach(c=>c.checked=true); updateWorthCount(); }
 function deselectAllWorth(){ document.querySelectorAll('.worth-check').forEach(c=>c.checked=false); updateWorthCount(); }
 function buildKeywordChips(){
   const box=document.getElementById('worthKeywordChips');
@@ -2257,18 +2333,35 @@ function toggleKeywordChip(ev, kw){
   const on=!chip.classList.contains('on');
   chip.classList.toggle('on', on);
   if(on) _activeKwChips.add(kw); else _activeKwChips.delete(kw);
-  document.querySelectorAll('.worth-check[data-kw]').forEach(c=>{
-    if((c.dataset.kw||'').split('、').includes(kw)) c.checked=on;
+  applyWorthFilters();
+}
+function worthPresetMatches(p){
+  if(_worthPresetFilter==='discussed') return (p.db_comment_count||0)>0;
+  if(_worthPresetFilter==='high') return (p.worth_score||0)>=60;
+  if(_worthPresetFilter==='gaps') return (p.comment_count||0)>=10&&(p.db_comment_count||0)<Math.min(p.comment_count||0,10);
+  if(_worthPresetFilter==='multi') return ((p.keywords||[]).length>1);
+  if(_worthPresetFilter==='zero') return (p.db_comment_count||0)===0;
+  return true;
+}
+function applyWorthFilters(){
+  const n=parseInt(document.getElementById('worthMinScore').value||'0',10)||0;
+  document.querySelectorAll('#worthBody tr[data-worth-row]').forEach(row=>{
+    const idx=parseInt(row.dataset.worthRow,10);
+    const p=_worthPosts[idx];
+    const kws=(p&&p.keywords&&p.keywords.length)?p.keywords:[p?.source_keyword||''];
+    const keywordMatch=!_activeKwChips.size||[..._activeKwChips].some(k=>kws.includes(k));
+    row.hidden=!(p&&worthPresetMatches(p)&&(p.worth_score||0)>=n&&keywordMatch);
   });
   updateWorthCount();
 }
-function selectByMinScore(){
-  const n=parseInt(document.getElementById('worthMinScore').value||'0',10)||0;
-  document.querySelectorAll('.worth-check').forEach(c=>{
-    const p=_worthPosts[parseInt(c.dataset.idx,10)];
-    c.checked = !!(p && (p.worth_score||0)>=n);
-  });
-  updateWorthCount();
+function selectByMinScore(){ applyWorthFilters(); }
+async function focusAssetQueue(filter){
+  _worthPresetFilter=filter||'all';
+  const score=document.getElementById('worthMinScore');
+  if(score) score.value=_worthPresetFilter==='high'?'60':'0';
+  if(!_worthPosts.length) await loadWorthDigging();
+  else applyWorthFilters();
+  document.getElementById('tabWorth')?.scrollIntoView({behavior:'smooth',block:'start'});
 }
 
 async function createTaskFromSelected(){
@@ -2412,12 +2505,56 @@ function updateCrawlKeywordSummary(){
   const maxCount=parseInt(document.getElementById('crawlMaxCount').value||'0',10);
   const stop=document.getElementById('crawlStopCondition')?.value||'new_count';
   const date=document.getElementById('crawlDateAfter')?.value||'';
+  const dateLabel=date||'（请设置日期下限）';
   const suffix=stop==='date_floor'
     ? ((Number.isFinite(maxCount)&&maxCount>0)
-      ? ('从新到旧抓到 '+date+' 为止；每词最多搜索 '+maxCount+' 个结果帖子')
-      : ('从新到旧抓到 '+date+' 为止；不按数量限制'))
-    : ('每词最多搜索 '+(Number.isFinite(maxCount)?maxCount:0)+' 个结果帖子');
+      ? ('从新到旧抓到 '+dateLabel+' 为止；每词最多搜索 '+maxCount+' 个结果帖子')
+      : ('从新到旧抓到 '+dateLabel+' 为止；不按数量限制'))
+    : ((Number.isFinite(maxCount)&&maxCount>0)
+      ? ('每词最多搜索 '+maxCount+' 个结果帖子')
+      : '不按搜索结果数量限制');
   document.getElementById('crawlKeywordSummary').textContent=kws.length+' 个关键词 · '+suffix;
+  updateCrawlPlanPreview();
+}
+function crawlGroupName(){
+  return document.getElementById('crawlKeywordGroupSelect')?.value||'自定义关键词';
+}
+function crawlAutoName(){
+  const group=crawlGroupName();
+  const mode=_crawlMode==='fresh'?'从新到旧':'常规抓帖';
+  return `${group}-${mode}-${new Date().toISOString().slice(0,10)}`.slice(0,80);
+}
+function applyCrawlContextDefaults(forceName=false){
+  const nameEl=document.getElementById('crawlTaskName');
+  const topicEl=document.getElementById('crawlTopic');
+  if(nameEl&&(forceName||!nameEl.value||nameEl.dataset.autoName==='1')){
+    nameEl.value=crawlAutoName();
+    nameEl.dataset.autoName='1';
+  }
+  if(topicEl&&(!topicEl.value||topicEl.dataset.autoTopic==='1')){
+    topicEl.value=crawlGroupName();
+    topicEl.dataset.autoTopic='1';
+  }
+  updateCrawlPlanPreview();
+}
+function updateCrawlPlanPreview(){
+  const box=document.getElementById('crawlPlanPreview');
+  if(!box) return;
+  const kws=parseKeywordsText(document.getElementById('crawlKeywords')?.value||'');
+  const maxCount=parseInt(document.getElementById('crawlMaxCount')?.value||'0',10)||0;
+  const date=document.getElementById('crawlDateAfter')?.value||'';
+  const stop=document.getElementById('crawlStopCondition')?.value||'new_count';
+  const sort=document.getElementById('crawlSortType')?.value==='time_descending'?'最新优先':'综合排序';
+  const comments=document.getElementById('crawlGetComments')?.value==='true'?'同时抓评论':'只抓帖子';
+  const start=document.getElementById('crawlStartMode')?.value==='auto'?'创建后立即启动':'创建后人工启动';
+  const account=selectedXhsAccount('crawlAccountSelect');
+  const accountInfo=_xhsAccounts.find(item=>item.account_id===account);
+  const pace=`详情间隔 ${document.getElementById('crawlMinSleep')?.value||'--'}–${document.getElementById('crawlMaxSleep')?.value||'--'} 秒`;
+  const stopText=stop==='date_floor'
+    ? `${date?('抓到 '+date):'尚未设置日期下限'}${maxCount>0?('，每词最多检查 '+maxCount+' 条结果'):'，不设数量上限'}`
+    : `每词最多检查 ${maxCount||0} 条结果`;
+  const occupiedWarning=accountInfo?.profile_in_use?'<br><strong style="color:#b45309">该账号登录窗口正在占用 Profile：可以先创建任务，但关闭登录窗口后才能启动；不要强制结束进程。</strong>':'';
+  box.innerHTML=`<strong>执行预览</strong> · 账号 ${escapeHtml(account)} · ${kws.length} 个关键词 · ${escapeHtml(sort)} · ${escapeHtml(stopText)} · ${escapeHtml(comments)} · ${escapeHtml(pace)} · ${escapeHtml(start)}。<br>安全上限统计搜索结果，不等于新增入库数；最终耗时取决于重复帖子、日期命中和平台风控。${occupiedWarning}`;
 }
 async function loadCrawlPresets(){
   const sel=document.getElementById('crawlKeywordGroupSelect');
@@ -2425,7 +2562,10 @@ async function loadCrawlPresets(){
   try{
     _crawlKeywordGroups=await fetchJSON('/api/groups');
     renderCrawlKeywordGroups();
-    if(!_selectedCrawlKeywords.size) applyCrawlKeywordGroup('Flu-HW');
+    if(!_selectedCrawlKeywords.size){
+      const active=_crawlKeywordGroups.find(g=>g.active);
+      applyCrawlKeywordGroup(active?.name||_crawlKeywordGroups[0]?.name);
+    }
   }catch(e){
     if(sel) sel.innerHTML='<option value="">关键词组加载失败</option>';
   }
@@ -2437,20 +2577,21 @@ function renderCrawlKeywordGroups(){
     sel.innerHTML='<option value="">暂无关键词组</option>';
     return;
   }
-  const preferred=_crawlKeywordGroups.find(g=>g.name==='Flu-HW')||_crawlKeywordGroups.find(g=>g.active)||_crawlKeywordGroups[0];
+  const preferred=_crawlKeywordGroups.find(g=>g.name===(document.getElementById('crawlKeywordGroupSelect')?.value||''))||_crawlKeywordGroups.find(g=>g.active)||_crawlKeywordGroups[0];
   sel.innerHTML=_crawlKeywordGroups.map(g=>`<option value="${escapeHtml(g.name)}"${g.name===preferred.name?' selected':''}>${escapeHtml(g.name)} · ${(g.keywords||[]).length}词</option>`).join('');
   applyCrawlKeywordGroup(preferred.name);
 }
 function applyCrawlKeywordGroup(groupName){
   const sel=document.getElementById('crawlKeywordGroupSelect');
-  const name=groupName || (sel&&sel.value) || 'Flu-HW';
-  const group=_crawlKeywordGroups.find(g=>g.name===name) || _crawlKeywordGroups.find(g=>g.name==='Flu-HW') || _crawlKeywordGroups[0];
+  const name=groupName || (sel&&sel.value) || '';
+  const group=_crawlKeywordGroups.find(g=>g.name===name) || _crawlKeywordGroups.find(g=>g.active) || _crawlKeywordGroups[0];
   if(!group) return;
   if(sel) sel.value=group.name;
   _selectedCrawlKeywords=new Set(group.keywords||[]);
   document.getElementById('crawlKeywords').value=[..._selectedCrawlKeywords].join('\n');
   const countEl=document.getElementById('crawlKeywordGroupCount');
   if(countEl) countEl.value=String(_selectedCrawlKeywords.size);
+  applyCrawlContextDefaults();
   updateCrawlKeywordSummary();
 }
 function renderCrawlPresets(){
@@ -2498,30 +2639,25 @@ function useFirstCrawlPreset(showToast=true){
   renderCrawlPresets();
   if(showToast) document.getElementById('crawlStatus').textContent='已填入「'+group.name+'」'+_selectedCrawlKeywords.size+' 个关键词';
 }
-function applyCrawlMode(mode){
+function applyCrawlMode(mode, resetDefaults=true){
   _crawlMode=mode||'standard';
   const fresh=_crawlMode==='fresh';
   document.getElementById('crawlModeStandard')?.classList.toggle('active', !fresh);
   document.getElementById('crawlModeFresh')?.classList.toggle('active', fresh);
-  const todayName=fresh?'fluency-lag-fresh-since-2026-06-10':'fluency-lag-crawl';
-  const nameEl=document.getElementById('crawlTaskName');
-  if(nameEl && (!nameEl.value || nameEl.value==='fluency-lag-crawl' || nameEl.value==='fluency-lag-fresh-since-2026-06-10')){
-    nameEl.value=todayName;
-  }
   document.getElementById('crawlModeSub').textContent=fresh
     ? '从最新排序开始抓关键词组里的帖子；安全上限为 0 时一直抓到日期下限。'
     : '按关键词组或手工输入关键词创建搜索任务。默认只创建，不自动启动。';
   document.getElementById('crawlCommonHint').textContent=fresh
-    ? '当前模式固定建议：最新排序 + Flu-HW 关键词组。安全上限数的是搜索结果帖子，不是入库帖子。'
-    : '当前目标是抓取流畅/卡顿相关帖子；可在下方切换从新到旧停止条件。';
+    ? '当前模式固定使用最新排序；安全上限数的是搜索结果帖子，不是入库帖子。'
+    : '使用当前关键词组或手工关键词；默认先创建任务，再人工确认启动。';
   document.getElementById('crawlSortType').value='time_descending';
   document.getElementById('crawlCountMode').value='incremental';
-  document.getElementById('crawlTopic').value='fluency_lag';
   const stopCondition=fresh?'date_floor':'new_count';
   const stopConditionEl=document.getElementById('crawlStopCondition');
   stopConditionEl.value=stopCondition;
   stopConditionEl.setAttribute('value', stopCondition);
-  onCrawlStopConditionChange(false);
+  applyCrawlContextDefaults();
+  onCrawlStopConditionChange(resetDefaults);
 }
 function onCrawlStopConditionChange(resetValue=true){
   const stop=document.getElementById('crawlStopCondition').value;
@@ -2565,7 +2701,7 @@ function readCrawlConfig(){
   const browserMode=document.getElementById('crawlBrowserMode').value;
   return {
     account_id:selectedXhsAccount('crawlAccountSelect'),
-    topic:document.getElementById('crawlTopic').value.trim()||'fluency_lag',
+    topic:document.getElementById('crawlTopic').value.trim()||crawlGroupName(),
     stop_condition:document.getElementById('crawlStopCondition').value,
     publish_date_after:document.getElementById('crawlDateAfter').value,
     max_count:readBoundedNumber('crawlMaxCount','搜索安全上限',0,200000,false),
@@ -2651,7 +2787,7 @@ function showCrawlWorkspace(view){
   document.querySelectorAll('[data-crawl-view]').forEach(btn=>btn.classList.toggle('active',btn.dataset.crawlView===next));
   document.querySelectorAll('.crawl-workspace-view').forEach(panel=>panel.classList.toggle('active',panel.id==='crawlView'+next.charAt(0).toUpperCase()+next.slice(1)));
   if(next==='log'&&_selectedCrawlTaskId) loadCrawlTaskLog(_selectedCrawlTaskId);
-  if(next==='create') loadCrawlPresets();
+  if(next==='create') loadCrawlPresets().then(()=>applyCrawlMode(_crawlMode, false));
   containAllScrollAreas(document.getElementById('panelCrawl'));
 }
 function revealCrawlTaskList(){
@@ -2675,6 +2811,7 @@ async function loadCrawlTasks(){
   document.getElementById('crawlStatus').innerHTML='<span class="spin-load"></span> 加载中…';
   const tasks=await fetchJSON('/api/crawl-tasks'+(_showArchivedCrawlTasks?'?archived=1':''));
   _crawlTasks=tasks||[];
+  if(!_showArchivedCrawlTasks){ _operationsCrawlTasks=_crawlTasks; renderOperationsOverview(); }
   document.getElementById('crawlBadge').textContent=tasks.length||0;
   if(!tasks.length){
     document.getElementById('crawlStatus').textContent=_showArchivedCrawlTasks?'回收站为空':'无任务';
@@ -2878,12 +3015,14 @@ function switchCrawlArchiveView(showArchived){
    ============================================================ */
 function updateCommentTaskCounts(tasks){
   const rows=Array.isArray(tasks)?tasks:[];
+  _commentTasks=rows;
   const attentionStatuses=new Set(['pending','starting','running','stopping','failed','completed_with_errors']);
-  const attentionCount=rows.filter(t=>attentionStatuses.has(t.status)).length;
+  const attentionCount=rows.filter(t=>attentionStatuses.has(t.status)&&!commentTaskWasCancelled(t)).length;
   const badge=document.getElementById('taskBadge');
   badge.textContent=attentionCount?String(attentionCount):'';
   badge.title=attentionCount?`${attentionCount} 个任务正在运行或需要处理`:'当前没有需要处理的评论补全任务';
   document.getElementById('taskTotal').textContent=`共 ${rows.length} 项`;
+  renderOperationsOverview();
   return {rows,attentionStatuses,attentionCount};
 }
 async function loadCommentTaskCounts(){
@@ -2899,9 +3038,9 @@ async function loadTasks(){
     const archived=await fetchJSON('/api/tasks?archived=1');
     tasks=Array.isArray(archived)?archived:[];
   }else if(_commentTaskView==='history'){
-    tasks=taskRows.filter(t=>!attentionStatuses.has(t.status));
+    tasks=taskRows.filter(t=>!attentionStatuses.has(t.status)||commentTaskWasCancelled(t));
   }else{
-    tasks=taskRows.filter(t=>attentionStatuses.has(t.status));
+    tasks=taskRows.filter(t=>attentionStatuses.has(t.status)&&!commentTaskWasCancelled(t));
   }
   const statusPriority={running:0,starting:0,stopping:1,failed:2,completed_with_errors:2,pending:3};
   tasks.sort((a,b)=>(statusPriority[a.status]??9)-(statusPriority[b.status]??9)||(b.created_at||0)-(a.created_at||0));
@@ -2919,7 +3058,8 @@ async function loadTasks(){
   }
   const taskItemHtml=(t)=>{
     const done=(t.completed_posts||0)+(t.failed_posts||0);
-    const progress=t.total_posts>0?Math.round(done/t.total_posts*100):0;
+    const successPct=t.total_posts>0?Math.round((t.completed_posts||0)/t.total_posts*100):0;
+    const failedPct=t.total_posts>0?Math.round((t.failed_posts||0)/t.total_posts*100):0;
     const created=new Date(t.created_at*1000).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
     const postStatus=t.post_status||{};
     const pending=postStatus.pending||0;
@@ -2928,7 +3068,7 @@ async function loadTasks(){
       <div class="task-top">
         <div class="task-name"><span>${escapeHtml(t.name)}</span>${t.group_tag?`<span class="task-group-tag">${escapeHtml(t.group_tag)}</span>`:''}</div>
         <div class="task-row-actions">
-          <span class="status-chip ${t.status}">${statusLabel(t.status)}</span>
+          <span class="status-chip ${commentTaskStatusClass(t)}">${commentTaskStatusLabel(t)}</span>
           ${taskActionButtons(t, true)}
         </div>
       </div>
@@ -2941,7 +3081,8 @@ async function loadTasks(){
         <span>${created}</span>
         ${t.archived_at?`<span>移入回收站 ${new Date(t.archived_at*1000).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})}</span>`:''}
       </div>
-      <div class="task-prog-track"><div class="task-prog-fill" style="width:${progress}%"></div></div>
+      <div class="task-guidance ${t.status==='completed_with_errors'?'attention':''}">${escapeHtml(commentTaskGuidance(t))}</div>
+      <div class="task-prog-track" title="成功 ${t.completed_posts||0} · 失败 ${t.failed_posts||0} · 未完成 ${Math.max((t.total_posts||0)-done,0)}"><div class="task-prog-fill success" style="width:${successPct}%"></div><div class="task-prog-fill failed" style="width:${failedPct}%"></div></div>
     </div>`;
   };
   const groups={};
@@ -2960,6 +3101,35 @@ async function loadTasks(){
 }
 function statusLabel(s){
   return {pending:'待处理',starting:'启动中',running:'运行中',completed:'已完成',completed_with_errors:'完成(有错误)',cancelled:'主动停止'}[s]||s;
+}
+function humanTaskError(message){
+  const text=String(message||'');
+  if(/cancelled by dashboard/i.test(text)) return '通过 Dashboard 人工停止';
+  if(/risk control|captcha|http 461|http 471/i.test(text)) return '平台触发风控，任务已安全停止';
+  if(/browser_path/i.test(text)) return '隔离浏览器配置不可用';
+  return text;
+}
+function redactTaskLogLine(line){
+  return String(line||'')
+    .replace(/(xsec_token=)[^&\s,]+/gi,'$1[已隐藏]')
+    .replace(/("xsec_token"\s*:\s*")[^"]+/gi,'$1[已隐藏]')
+    .replace(/(xsec-token["'=:\s]+)[^&\s,"]+/gi,'$1[已隐藏]');
+}
+function commentTaskWasCancelled(task){ return /cancelled by dashboard|主动终止|人工终止/i.test(task?.error_message||''); }
+function commentTaskStatusLabel(task){ return commentTaskWasCancelled(task)?'主动停止':statusLabel(task?.status||'pending'); }
+function commentTaskStatusClass(task){ return commentTaskWasCancelled(task)?'stopped':(task?.status||'pending'); }
+function commentTaskGuidance(task){
+  const pending=(task.post_status&&task.post_status.pending)||0;
+  const running=(task.post_status&&task.post_status.running)||0;
+  const completed=task.completed_posts||0;
+  const failed=task.failed_posts||0;
+  if(commentTaskWasCancelled(task)) return `已人工停止：成功 ${completed}，失败 ${failed}${pending?`，另有 ${pending} 条待处理`:''}。需要时可继续剩余项，否则移入回收站。`;
+  if(task.status==='completed_with_errors') return `部分完成：成功 ${completed}，失败 ${failed}${pending?`，待处理 ${pending}`:''}。建议先查看首条失败原因，再重试失败项。`;
+  if(task.status==='pending') return `等待人工启动，共 ${task.total_posts||0} 条${pending?`，其中 ${pending} 条待处理`:''}。`;
+  if(task.status==='starting') return '正在启动浏览器和任务环境，请稍候。';
+  if(task.status==='running') return `正在运行：${running||1} 条处理中，已成功 ${completed} 条。`;
+  if(task.status==='completed') return `正常完成：${completed}/${task.total_posts||completed} 条成功，新增评论 ${task.total_comments_added||0} 条。`;
+  return task.error_message||'查看任务详情了解当前状态。';
 }
 function parseTaskConfig(task){
   if(!task) return {};
@@ -3097,7 +3267,7 @@ async function loadTaskLog(taskId){
     const log=await fetchJSON('/api/tasks/'+taskId+'/log?lines=120');
     if(log.error){ box.textContent=log.error; return; }
     const lines=log.lines||[];
-    box.textContent=lines.length?lines.join('\n'):'暂无任务日志';
+    box.textContent=lines.length?lines.map(redactTaskLogLine).join('\n'):'暂无任务日志';
     box.scrollTop=box.scrollHeight;
   }catch(e){
     box.textContent='日志加载失败：'+e.message;
@@ -3124,7 +3294,7 @@ async function showTaskDetail(taskId, keepScroll){
         <div class="task-post-meta">${escapeHtml(p.note_id||'')} · ${escapeHtml(p.source_keyword||'')}</div>
       </div>
       <div class="task-post-count">${before} → ${after}<br><span style="color:var(--green)">+${added}</span></div>
-      ${p.error_message?`<div class="task-post-error">${escapeHtml(p.error_message)}</div>`:''}
+      ${p.error_message?`<div class="task-post-error">${escapeHtml(humanTaskError(p.error_message))}</div>`:''}
     </div>`;
   }).join('');
   detail.innerHTML=`<div class="task-detail-head">
@@ -3133,13 +3303,15 @@ async function showTaskDetail(taskId, keepScroll){
       <div class="task-detail-sub"><span class="mono">${escapeHtml(task.id)}</span> · ${new Date(task.created_at*1000).toLocaleString('zh-CN')}</div>
     </div>
     <div style="display:flex;gap:8px;align-items:center">
-      <span class="status-chip ${task.status}">${statusLabel(task.status)}</span>
+      <span class="status-chip ${commentTaskStatusClass(task)}">${commentTaskStatusLabel(task)}</span>
       ${taskActionButtons(task, false)}
     </div>
   </div>
+  <div class="task-guidance ${task.status==='completed_with_errors'?'attention':''}" style="margin-bottom:12px">${escapeHtml(commentTaskGuidance(task))}</div>
   <div class="task-stat-grid">
     <div class="task-stat"><div class="v">${task.total_posts||0}</div><div class="k">总帖子</div></div>
-    <div class="task-stat"><div class="v">${done}</div><div class="k">已处理</div></div>
+    <div class="task-stat"><div class="v">${task.completed_posts||0}</div><div class="k">成功</div></div>
+    <div class="task-stat"><div class="v">${task.failed_posts||0}</div><div class="k">失败</div></div>
     <div class="task-stat"><div class="v">${pending}</div><div class="k">待处理</div></div>
     <div class="task-stat"><div class="v">${task.total_comments_added||0}</div><div class="k">新增评论</div></div>
   </div>
@@ -3150,7 +3322,7 @@ async function showTaskDetail(taskId, keepScroll){
     <span>失败 ${task.failed_posts||0}</span>
     ${task.log_path?`<span title="${escapeHtml(task.log_path)}">日志 ${escapeHtml(task.log_path.split('/').pop())}</span>`:''}
     ${task.archived_at?`<span>已移入回收站 ${new Date(task.archived_at*1000).toLocaleString('zh-CN')}</span>`:''}
-    ${task.error_message?`<span style="color:var(--red)">错误：${escapeHtml(task.error_message)}</span>`:''}
+    ${task.error_message?`<span style="color:var(--red)">原因：${escapeHtml(humanTaskError(task.error_message))}</span>`:''}
   </div>
   <div class="task-post-list">
     ${postRows||'<div class="empty">暂无帖子明细</div>'}
@@ -3177,7 +3349,7 @@ function switchMainView(view){
   document.body.dataset.mainView = next;
   document.getElementById('mainViewTasks').classList.toggle('active', next==='tasks');
   document.getElementById('mainViewData').classList.toggle('active', next==='data');
-  window.scrollTo({top:0, behavior:'smooth'});
+  window.scrollTo({top:0, behavior:'auto'});
 
   if(next==='tasks'){
     switchTab(_taskCenterTab);
@@ -3522,6 +3694,14 @@ async function init(){
   await loadXhsAccounts();
   await loadGroups();
   await loadSourceKeys();
+  const nameEl=document.getElementById('crawlTaskName');
+  const topicEl=document.getElementById('crawlTopic');
+  if(nameEl) nameEl.addEventListener('input',()=>{ nameEl.dataset.autoName='0'; });
+  if(topicEl) topicEl.addEventListener('input',()=>{ topicEl.dataset.autoTopic='0'; });
+  ['crawlAccountSelect','crawlSortType','crawlGetComments','crawlStartMode','crawlMinSleep','crawlMaxSleep'].forEach(id=>{
+    const el=document.getElementById(id);
+    if(el) el.addEventListener('change',updateCrawlPlanPreview);
+  });
   if(document.body.dataset.mainView==='tasks') switchTab('crawl');
   containAllScrollAreas();
   refreshAll();
