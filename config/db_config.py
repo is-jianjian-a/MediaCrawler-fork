@@ -49,7 +49,7 @@ CACHE_TYPE_MEMORY = "memory"
 
 # sqlite config
 # 默认数据库路径
-_DEFAULT_ACCOUNT = os.getenv("MEDIACRAWLER_ACCOUNT", "")  # 空=基础库 sqlite_tables.db；设 "02"/"03"=对应账号库
+_DEFAULT_ACCOUNT = os.getenv("MEDIACRAWLER_ACCOUNT", "")  # 写入来源标记；数据库隔离由 SQLITE_DB_PATH 决定
 
 def get_current_account() -> str:
     """返回当前抓取账号标识，用于写入 crawler_account 字段。"""

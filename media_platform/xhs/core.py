@@ -903,11 +903,15 @@ class XiaoHongShuCrawler(AbstractCrawler):
         viewport = utils.get_random_viewport()
         launch_options = {}
         if config.CUSTOM_BROWSER_PATH:
-            launch_options["executable_path"] = config.CUSTOM_BROWSER_PATH
-        else:
-            default_chrome_path = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-            if os.path.exists(default_chrome_path):
-                launch_options["executable_path"] = default_chrome_path
+            browser_path = os.path.realpath(os.path.expanduser(config.CUSTOM_BROWSER_PATH))
+            system_chrome_path = os.path.realpath(
+                "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+            )
+            if browser_path == system_chrome_path:
+                raise RuntimeError(
+                    "system Google Chrome is forbidden; configure an isolated Chromium"
+                )
+            launch_options["executable_path"] = browser_path
         if config.SAVE_LOGIN_STATE:
             user_data_dir = os.path.join(os.getcwd(), "browser_data", config.USER_DATA_DIR % config.PLATFORM)
             browser_context = await chromium.launch_persistent_context(

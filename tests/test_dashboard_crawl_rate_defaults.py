@@ -1,5 +1,7 @@
 """Contract tests for Dashboard keyword-task rate propagation."""
 
+from contextlib import nullcontext
+
 from dashboard import crawl_runner
 from dashboard import comment_fetcher as _comment_fetcher  # Ensures direct-script imports resolve.
 from dashboard.crawl_runner import _build_command
@@ -136,6 +138,9 @@ def test_runner_records_risk_control_as_failed(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(crawl_runner.subprocess, "Popen", lambda *args, **kwargs: FakeProcess())
     monkeypatch.setattr(crawl_runner, "record_completion", lambda **kwargs: None)
+    monkeypatch.setattr(crawl_runner, "confirm_launch", lambda *args: None)
+    monkeypatch.setattr(crawl_runner, "acquire_profile_lock", lambda **kwargs: nullcontext())
+    monkeypatch.setattr(crawl_runner, "launch_lease_heartbeat", lambda *args: nullcontext())
     monkeypatch.setattr(crawl_runner, "LOG_DIR", tmp_path)
 
     assert crawl_runner.run_task("crawl-risk") == RISK_CONTROL_EXIT_CODE

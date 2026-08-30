@@ -13,6 +13,8 @@ import fcntl
 import hashlib
 import json
 import os
+import re
+import socket
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -29,6 +31,48 @@ LOCK_DIR = Path(__file__).resolve().parent / "locks"
 
 class ProfileLockError(RuntimeError):
     """Raised when another worker already owns the browser profile."""
+
+
+def native_profile_owner(user_data_dir: str) -> dict:
+    """Return a live Chromium SingletonLock owner, including manual login windows."""
+    profile_path = resolve_profile_path(user_data_dir)
+    singleton_lock = profile_path / "SingletonLock"
+    if not singleton_lock.is_symlink():
+        return {}
+    try:
+        target = os.readlink(singleton_lock)
+    except OSError:
+        return {}
+    match = re.search(r"-(\d+)$", target)
+    if not match:
+        return {
+            "in_use": True,
+            "pid": 0,
+            "owner": target,
+            "reason": "Chromium profile has an unrecognized native lock",
+        }
+    pid = int(match.group(1))
+    owner_host = target[: match.start()]
+    local_hosts = {socket.gethostname(), socket.getfqdn()}
+    if owner_host and owner_host not in local_hosts:
+        return {
+            "in_use": True,
+            "pid": pid,
+            "owner": target,
+            "reason": "Chromium profile is locked by another host",
+        }
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return {}
+    except PermissionError:
+        pass
+    return {
+        "in_use": True,
+        "pid": pid,
+        "owner": target,
+        "reason": "Chromium profile is already open",
+    }
 
 
 def _lock_path(user_data_dir: str) -> Path:
@@ -76,6 +120,12 @@ def acquire_profile_lock(
             raise ProfileLockError(
                 f"browser profile is already locked by {owner_text}"
             ) from exc
+
+        native_owner = native_profile_owner(user_data_dir)
+        if native_owner:
+            raise ProfileLockError(
+                f"{native_owner['reason']} (pid={native_owner.get('pid') or 'unknown'})"
+            )
 
         _write_metadata(
             handle,

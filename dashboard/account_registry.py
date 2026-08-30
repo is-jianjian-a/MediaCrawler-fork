@@ -359,6 +359,51 @@ def get_account(
     return account
 
 
+def validate_account_runtime(account: Dict[str, Any]) -> Dict[str, Any]:
+    """Revalidate one enabled route before it reaches a worker process."""
+    account_id = validate_account_id(account.get("account_id", ""))
+    profile_path = resolve_profile_path(account.get("user_data_dir", ""))
+    browser_path = validate_browser_path(account.get("browser_path", ""))
+    storage_mode = str(account.get("storage_mode", "") or "")
+    db_path = _validate_content_db_path(
+        account.get("sqlite_db_path", ""), storage_mode=storage_mode
+    )
+    if storage_mode == "legacy_shared" and account_id != DEFAULT_ACCOUNT_ID:
+        raise AccountRegistryError(
+            "only the default compatibility account may use legacy shared storage"
+        )
+
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM xhs_accounts WHERE enabled=1 AND account_id<>?",
+            (account_id,),
+        ).fetchall()
+    finally:
+        conn.close()
+    for row in rows:
+        other = _row_to_account(row)
+        if Path(other["profile_path"]).resolve(strict=False) == profile_path:
+            raise AccountRegistryError(
+                f"browser profile conflicts with enabled account {other['account_id']}"
+            )
+        other_db = Path(other["sqlite_db_path"]).resolve(strict=False)
+        if Path(db_path).resolve(strict=False) == other_db:
+            raise AccountRegistryError(
+                f"content database conflicts with enabled account {other['account_id']}"
+            )
+
+    validated = dict(account)
+    validated.update(
+        {
+            "profile_path": str(profile_path),
+            "browser_path": browser_path,
+            "sqlite_db_path": db_path,
+        }
+    )
+    return validated
+
+
 def create_account(
     *,
     account_id: str,
@@ -486,6 +531,8 @@ def bind_task_config(
     account = get_account(str(selected), require_enabled=require_enabled)
     if not account:
         raise AccountRegistryError(f"account not found: {selected}")
+    if require_enabled:
+        account = validate_account_runtime(account)
     normalized_config.update(
         {
             "account_id": account["account_id"],

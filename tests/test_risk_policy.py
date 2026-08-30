@@ -31,7 +31,7 @@ def test_risk_cooldown_then_two_clean_canaries(monkeypatch, tmp_path):
     first = policy.reserve_launch(
         task_id="search-risk", task_kind="search", config=_search_config(), now=start
     )
-    assert first.allowed and not first.canary
+    assert first.allowed and first.canary
     policy.confirm_launch("search-risk", "%s_user_data_dir_account02", now=start)
     status = policy.record_completion(
         task_id="search-risk",
@@ -114,14 +114,14 @@ def test_comments_require_normal_state_and_small_scope(monkeypatch, tmp_path):
     assert not blocked.allowed
     assert "两次干净搜索" in blocked.reason
 
-    # A fresh account is normal but oversized comment work is still rejected.
-    too_large = policy.reserve_launch(
-        task_id="comments-large", task_kind="comment", total_posts=3,
+    # A fresh account cannot start comments before two clean search canaries.
+    fresh = policy.reserve_launch(
+        task_id="comments-fresh", task_kind="comment", total_posts=1,
         config=_search_config(user_data_dir="other", max_comments=5, comment_sleep=90),
         now=now,
     )
-    assert not too_large.allowed
-    assert "最多 2 篇" in too_large.reason
+    assert not fresh.allowed
+    assert "两次干净搜索" in fresh.reason
 
 
 def test_comment_sessions_are_batched_after_two_search_sessions(monkeypatch, tmp_path):
@@ -139,7 +139,7 @@ def test_comment_sessions_are_batched_after_two_search_sessions(monkeypatch, tmp
         now=now,
     )
     assert not blocked.allowed
-    assert "2 个新搜索会话" in blocked.reason
+    assert "两次干净搜索" in blocked.reason
 
     for index in range(2):
         task_id = f"search-{index}"
@@ -252,13 +252,14 @@ def test_risk_control_isolated_between_profiles(monkeypatch, tmp_path):
         now=now,
     )
     assert policy.get_status(profile_a, now=now + 1)["state"] == "cooldown"
-    assert policy.get_status(profile_b, now=now + 1)["state"] == "normal"
-    assert policy.reserve_launch(
+    assert policy.get_status(profile_b, now=now + 1)["state"] == "canary"
+    decision = policy.reserve_launch(
         task_id="search-b",
         task_kind="search",
         config=_search_config(user_data_dir=profile_b),
         now=now + 1,
-    ).allowed
+    )
+    assert decision.allowed and decision.canary
 
 
 def test_launch_budget_retry_waits_until_count_falls_below_limit(monkeypatch, tmp_path):

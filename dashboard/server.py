@@ -55,7 +55,6 @@ except ModuleNotFoundError:  # Support `python dashboard/server.py`.
 try:
     from dashboard.risk_policy import (
         abort_launch,
-        confirm_launch,
         get_status as get_risk_policy_status,
         init_risk_policy_db,
         record_completion,
@@ -64,12 +63,15 @@ try:
 except ModuleNotFoundError:  # Support `python dashboard/server.py`.
     from risk_policy import (  # type: ignore[no-redef]
         abort_launch,
-        confirm_launch,
         get_status as get_risk_policy_status,
         init_risk_policy_db,
         record_completion,
         reserve_launch,
     )
+try:
+    from dashboard.profile_lock import native_profile_owner
+except ModuleNotFoundError:  # Support `python dashboard/server.py`.
+    from profile_lock import native_profile_owner  # type: ignore[no-redef]
 from worth_scoring import score_post
 from comment_fetcher import (
     DEFAULT_COMMENT_PUBLISH_DATE_AFTER,
@@ -108,7 +110,7 @@ SNAPSHOT_INTERVAL = 30
 RISK_SCHEDULER_INTERVAL = int(os.getenv("MEDIACRAWLER_RISK_SCHEDULER_INTERVAL", "30"))
 RISK_SCHEDULER_ENABLED = os.getenv("MEDIACRAWLER_RISK_SCHEDULER_ENABLED", "true").lower() in ("1", "true", "yes")
 MAX_PARALLEL_XHS_ACCOUNTS = max(
-    1, int(os.getenv("MEDIACRAWLER_MAX_PARALLEL_XHS_ACCOUNTS", "4"))
+    1, int(os.getenv("MEDIACRAWLER_MAX_PARALLEL_XHS_ACCOUNTS", "2"))
 )
 MAX_DB_SIZE_MB = 100
 MAX_HISTORY_HOURS = 72
@@ -1159,6 +1161,7 @@ def api_list_xhs_accounts():
                 "storage_mode": account["storage_mode"],
                 "profile_exists": account["profile_exists"],
                 "content_db_exists": account["content_db_exists"],
+                "profile_in_use": bool(native_profile_owner(account["user_data_dir"])),
                 "risk_policy": get_risk_policy_status(account["user_data_dir"]),
             }
         )
@@ -1238,18 +1241,11 @@ def api_create_task():
             return jsonify({"error": "account content database is not initialized"}), 409
         try:
             placeholders = ",".join("?" for _ in posts)
-            note_columns = {
-                row[1]
-                for row in account_conn.execute("PRAGMA table_info(xhs_note)").fetchall()
-            }
-            account_clause = " AND crawler_account=?" if "crawler_account" in note_columns else ""
             query_params = [post["note_id"] for post in posts]
-            if account_clause:
-                query_params.append(account["account_id"])
             existing_note_ids = {
                 row[0]
                 for row in account_conn.execute(
-                    f"SELECT note_id FROM xhs_note WHERE note_id IN ({placeholders}){account_clause}",
+                    f"SELECT note_id FROM xhs_note WHERE note_id IN ({placeholders})",
                     query_params,
                 ).fetchall()
             }
@@ -1341,6 +1337,20 @@ def _account_has_active_task(account_id: str, *, exclude_task_id: str = "") -> b
     return False
 
 
+def _profile_busy_response(account: dict):
+    owner = native_profile_owner(account["user_data_dir"])
+    if not owner:
+        return None
+    return jsonify(
+        {
+            "error": "selected account browser profile is already open",
+            "profile_in_use": True,
+            "owner_pid": owner.get("pid", 0),
+            "hint": "Close the isolated login window before starting this task.",
+        }
+    ), 409
+
+
 def _launch_comment_task(task_id, retry_failed=False):
     from task_manager import claim_task, fail_task_start, get_task, set_task_worker_pid
 
@@ -1357,6 +1367,9 @@ def _launch_comment_task(task_id, retry_failed=False):
         return jsonify({"error": str(exc)}), 409
     if _account_has_active_task(account["account_id"], exclude_task_id=task_id):
         return jsonify({"error": "selected account already has an active task"}), 409
+    profile_busy = _profile_busy_response(account)
+    if profile_busy:
+        return profile_busy
     dry_run = bool(task_config.get("dry_run"))
     if not dry_run:
         decision = reserve_launch(
@@ -1459,8 +1472,6 @@ def _launch_comment_task(task_id, retry_failed=False):
             start_new_session=True,
         )
         set_task_worker_pid(task_id, worker.pid)
-        if not dry_run:
-            confirm_launch(task_id, account["user_data_dir"])
     except Exception as exc:
         fail_task_start(task_id, str(exc))
         if not dry_run:
@@ -2141,6 +2152,9 @@ def _launch_crawl_task(task_id):
         return jsonify({"error": str(exc)}), 409
     if _account_has_active_task(account["account_id"], exclude_task_id=task_id):
         return jsonify({"error": "selected account already has an active task"}), 409
+    profile_busy = _profile_busy_response(account)
+    if profile_busy:
+        return profile_busy
     dry_run = bool(task_config.get("dry_run"))
     if not dry_run:
         decision = reserve_launch(
@@ -2205,8 +2219,6 @@ def _launch_crawl_task(task_id):
             start_new_session=True,
         )
         set_crawl_worker_pid(task_id, worker.pid)
-        if not dry_run:
-            confirm_launch(task_id, account["user_data_dir"])
     except Exception as exc:
         fail_crawl_task_start(task_id, str(exc))
         if not dry_run:

@@ -1,5 +1,7 @@
 """Account registry and physical profile isolation tests."""
 
+import os
+import socket
 import sqlite3
 from pathlib import Path
 
@@ -43,6 +45,25 @@ def test_accounts_get_distinct_profiles_and_databases(isolated_registry):
     assert Path(account_b["sqlite_db_path"]).parent.name == "B"
 
 
+def test_runtime_binding_rejects_enabled_database_collision(isolated_registry):
+    account_a = registry.create_account(
+        account_id="A", browser_path=str(isolated_registry), enabled=True
+    )
+    registry.create_account(
+        account_id="B", browser_path=str(isolated_registry), enabled=True
+    )
+    conn = sqlite3.connect(registry.TASK_DB)
+    conn.execute(
+        "UPDATE xhs_accounts SET sqlite_db_path=? WHERE account_id='B'",
+        (account_a["sqlite_db_path"],),
+    )
+    conn.commit()
+    conn.close()
+
+    with pytest.raises(registry.AccountRegistryError, match="content database conflicts"):
+        registry.bind_task_config({}, account_id="A")
+
+
 def test_duplicate_physical_profile_alias_is_rejected(isolated_registry):
     registry.create_account(
         account_id="A",
@@ -83,6 +104,24 @@ def test_profile_lock_blocks_same_profile_but_not_another(isolated_registry):
             account_id="B",
             user_data_dir="%s_user_data_dir_accountB",
             task_id="task-b",
+        ):
+            pass
+
+
+def test_profile_lock_detects_manually_open_chromium(isolated_registry):
+    user_data_dir = "%s_user_data_dir_accountA"
+    profile_path = registry.resolve_profile_path(user_data_dir)
+    profile_path.mkdir(parents=True)
+    (profile_path / "SingletonLock").symlink_to(
+        f"{socket.gethostname()}-{os.getpid()}"
+    )
+
+    owner = profile_lock.native_profile_owner(user_data_dir)
+    assert owner["in_use"] is True
+    assert owner["pid"] == os.getpid()
+    with pytest.raises(profile_lock.ProfileLockError, match="already open"):
+        with profile_lock.acquire_profile_lock(
+            account_id="A", user_data_dir=user_data_dir, task_id="task-a"
         ):
             pass
 

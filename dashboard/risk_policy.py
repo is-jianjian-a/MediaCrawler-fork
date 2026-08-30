@@ -96,8 +96,8 @@ def init_risk_policy_db() -> None:
         """
         CREATE TABLE IF NOT EXISTS xhs_risk_state (
             account_key TEXT PRIMARY KEY,
-            state TEXT NOT NULL DEFAULT 'normal',
-            clean_canaries INTEGER NOT NULL DEFAULT 2,
+            state TEXT NOT NULL DEFAULT 'canary',
+            clean_canaries INTEGER NOT NULL DEFAULT 0,
             cooldown_until REAL NOT NULL DEFAULT 0,
             locked_until REAL NOT NULL DEFAULT 0,
             last_task_started_at REAL NOT NULL DEFAULT 0,
@@ -266,9 +266,9 @@ def _ensure_state(conn: sqlite3.Connection, account_key: str, now: float) -> sql
         """
         INSERT OR IGNORE INTO xhs_risk_state
         (account_key, state, clean_canaries, updated_at)
-        VALUES (?, 'normal', ?, ?)
+        VALUES (?, 'canary', 0, ?)
         """,
-        (account_key, REQUIRED_CLEAN_CANARIES, now),
+        (account_key, now),
     )
     return conn.execute(
         "SELECT * FROM xhs_risk_state WHERE account_key = ?", (account_key,)

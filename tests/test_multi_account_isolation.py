@@ -120,6 +120,7 @@ def test_account_api_does_not_expose_local_routing_paths():
     with (
         mock.patch.object(server, "list_accounts", return_value=[account]),
         mock.patch.object(server, "get_risk_policy_status", return_value={"state": "normal"}),
+        mock.patch.object(server, "native_profile_owner", return_value={}),
     ):
         response = server.app.test_client().get("/api/xhs-accounts")
 
@@ -128,3 +129,22 @@ def test_account_api_does_not_expose_local_routing_paths():
     assert "profile_path" not in payload
     assert "sqlite_db_path" not in payload
     assert "browser_path" not in payload
+
+
+def test_profile_busy_response_is_safe_and_does_not_reserve_launch():
+    account = {"user_data_dir": "%s_user_data_dir_accountA"}
+    with (
+        server.app.test_request_context(),
+        mock.patch.object(
+            server,
+            "native_profile_owner",
+            return_value={"in_use": True, "pid": 123, "owner": "private-lock"},
+        ),
+    ):
+        response, status = server._profile_busy_response(account)
+
+    payload = response.get_json()
+    assert status == 409
+    assert payload["profile_in_use"] is True
+    assert payload["owner_pid"] == 123
+    assert "private-lock" not in str(payload)

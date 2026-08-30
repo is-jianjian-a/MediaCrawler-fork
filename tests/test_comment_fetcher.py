@@ -3,6 +3,7 @@ import io
 import os
 import tempfile
 import unittest
+from contextlib import nullcontext
 from pathlib import Path
 from unittest import mock
 
@@ -33,6 +34,38 @@ class CommentFetcherTests(unittest.TestCase):
     def test_detail_url_rejects_missing_token(self):
         with self.assertRaisesRegex(ValueError, "xsec_token"):
             CommentTaskExecutor.detail_url({"note_id": "abc", "note_url": ""})
+
+    def test_selected_database_not_crawler_account_controls_row_visibility(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = os.path.join(temp_dir, "legacy-shared.db")
+            import sqlite3
+            conn = sqlite3.connect(db_path)
+            conn.execute(
+                "CREATE TABLE xhs_note (note_id TEXT, note_url TEXT, "
+                "xsec_token TEXT, title TEXT, crawler_account TEXT)"
+            )
+            conn.execute(
+                "CREATE TABLE xhs_note_comment "
+                "(comment_id TEXT, note_id TEXT, crawler_account TEXT)"
+            )
+            conn.execute(
+                "INSERT INTO xhs_note VALUES "
+                "('note-1', 'https://example.test/note-1', 'token', 'title', '01')"
+            )
+            conn.execute(
+                "INSERT INTO xhs_note_comment VALUES ('comment-1', 'note-1', '01')"
+            )
+            conn.commit()
+            conn.close()
+
+            executor = CommentTaskExecutor(
+                db_path, max_comments=1, dry_run=True, account_id="02"
+            )
+            try:
+                self.assertEqual(executor.get_post("note-1")["title"], "title")
+                self.assertEqual(executor.saved_comment_count("note-1"), 1)
+            finally:
+                executor.close()
 
     def test_default_environment_uses_safe_comment_task_rate(self):
         """Comment supplement tasks must launch with the conservative rate profile."""
@@ -208,7 +241,6 @@ class CommentFetcherTests(unittest.TestCase):
                     "reserve_launch",
                     return_value=LaunchDecision(True, "normal"),
                 ),
-                mock.patch.object(dashboard_server, "confirm_launch"),
                 mock.patch.object(dashboard_server.subprocess, "Popen", return_value=fake_worker) as popen,
             ):
                 response, status = dashboard_server._launch_comment_task("task-browser")
@@ -393,6 +425,13 @@ class CommentFetcherTests(unittest.TestCase):
                 ),
                 mock.patch.object(comment_fetcher, "update_post_status", side_effect=fake_update),
                 mock.patch.object(comment_fetcher, "record_completion"),
+                mock.patch.object(comment_fetcher, "confirm_launch"),
+                mock.patch.object(
+                    comment_fetcher, "acquire_profile_lock", return_value=nullcontext()
+                ),
+                mock.patch.object(
+                    comment_fetcher, "launch_lease_heartbeat", return_value=nullcontext()
+                ),
                 mock.patch.object(comment_fetcher, "CommentTaskExecutor", FakeExecutor),
                 mock.patch.object(comment_fetcher, "DASHBOARD_DIR", Path(temp_dir)),
                 mock.patch.object(

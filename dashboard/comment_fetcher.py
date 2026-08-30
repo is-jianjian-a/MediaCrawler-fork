@@ -26,9 +26,9 @@ sys.path.insert(0, str(DASHBOARD_DIR))
 
 from tools.app_runner import RISK_CONTROL_EXIT_CODE
 try:
-    from dashboard.risk_policy import launch_lease_heartbeat, record_completion
+    from dashboard.risk_policy import confirm_launch, launch_lease_heartbeat, record_completion
 except ModuleNotFoundError:
-    from risk_policy import launch_lease_heartbeat, record_completion  # type: ignore[no-redef]
+    from risk_policy import confirm_launch, launch_lease_heartbeat, record_completion  # type: ignore[no-redef]
 try:
     from dashboard.account_registry import (
         DEFAULT_ACCOUNT_ID,
@@ -222,42 +222,26 @@ class CommentTaskExecutor:
         self.last_exit_code = 0
         self.conn = sqlite3.connect(self.db_path, timeout=30)
         self.conn.row_factory = sqlite3.Row
-        self.note_account_scoped = "crawler_account" in {
-            row[1] for row in self.conn.execute("PRAGMA table_info(xhs_note)").fetchall()
-        }
-        self.comment_account_scoped = "crawler_account" in {
-            row[1]
-            for row in self.conn.execute("PRAGMA table_info(xhs_note_comment)").fetchall()
-        }
 
     def close(self):
         self.conn.close()
 
     def saved_comment_count(self, note_id: str) -> int:
-        if self.comment_account_scoped:
-            return self.conn.execute(
-                "SELECT COUNT(*) FROM xhs_note_comment "
-                "WHERE note_id = ? AND crawler_account = ?",
-                (note_id, self.account_id),
-            ).fetchone()[0]
         return self.conn.execute(
             "SELECT COUNT(*) FROM xhs_note_comment WHERE note_id = ?",
             (note_id,),
         ).fetchone()[0]
 
     def get_post(self, note_id: str) -> Dict:
-        if self.note_account_scoped:
-            row = self.conn.execute(
-                """SELECT note_id, note_url, xsec_token, title
-                   FROM xhs_note WHERE note_id = ? AND crawler_account = ?""",
-                (note_id, self.account_id),
-            ).fetchone()
-        else:
-            row = self.conn.execute(
-                """SELECT note_id, note_url, xsec_token, title
-                   FROM xhs_note WHERE note_id = ?""",
-                (note_id,),
-            ).fetchone()
+        # The registry-selected database is the isolation boundary.  The
+        # crawler_account column is historical provenance and may name the
+        # first writer of a globally unique note/comment, so it must not hide
+        # rows inside the selected database.
+        row = self.conn.execute(
+            """SELECT note_id, note_url, xsec_token, title
+               FROM xhs_note WHERE note_id = ?""",
+            (note_id,),
+        ).fetchone()
         return dict(row) if row else {}
 
     @staticmethod
@@ -582,6 +566,8 @@ def main() -> int:
     )
     try:
         with profile_guard, lease_guard:
+            if not args.dry_run:
+                confirm_launch(args.task_id, account["user_data_dir"])
             with log_path.open("a", encoding="utf-8") as log_file:
                 print(f"[task-run] posts={len(posts)} browser_launches=1", file=log_file, flush=True)
                 all_ok = executor.run_batch(args.task_id, posts, log_file)

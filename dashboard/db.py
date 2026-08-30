@@ -24,10 +24,12 @@ logger = logging.getLogger("MediaCrawler")
 
 
 def get_crawler_db_path(account: str = None) -> str:
-    """Public entry point — resolve the crawler DB path.
+    """Resolve the legacy/default Dashboard content database.
 
-    数据已合并至主库，所有账号共享 sqlite_tables.db，通过 crawler_account 字段区分。
-    account 参数保留仅用于兼容旧调用。
+    Historical 01/02/03 data remains merged here for compatibility. New
+    Dashboard accounts are routed through ``account_registry.account_db_path``
+    to dedicated databases; ``crawler_account`` is provenance, not isolation.
+    ``account`` remains only for compatibility with older callers.
     """
     if not os.path.exists(SQLITE_DB_PATH) or os.path.getsize(SQLITE_DB_PATH) == 0:
         raise FileNotFoundError(f"Main crawler DB not found or empty: {SQLITE_DB_PATH}")
