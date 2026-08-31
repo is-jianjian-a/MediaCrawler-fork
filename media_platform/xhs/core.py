@@ -921,6 +921,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
                 proxy=playwright_proxy,  # type: ignore
                 viewport=viewport,
                 user_agent=user_agent,
+                args=["--disable-background-mode"],
                 **launch_options,
             )
             return browser_context
