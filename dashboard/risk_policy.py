@@ -76,6 +76,42 @@ def _account_key(user_data_dir: str, platform: str = "xhs") -> str:
     return f"{platform}:{profile}"
 
 
+def _effective_launch_event_predicate(alias: str = "launch") -> str:
+    """Exclude an imported lower bound when its real launch is also recorded."""
+    dedup_seconds = float(RESERVATION_TTL_SECONDS)
+    return f"""
+        {alias}.event_type='launch_started'
+        AND NOT (
+            CASE WHEN json_valid({alias}.detail_json)
+                 THEN COALESCE(json_extract({alias}.detail_json, '$.imported'), 0)
+                 ELSE 0 END = 1
+            AND CASE WHEN json_valid({alias}.detail_json)
+                     THEN COALESCE(json_extract({alias}.detail_json, '$.lower_bound'), 0)
+                     ELSE 0 END = 1
+            AND EXISTS (
+                SELECT 1 FROM xhs_risk_events AS real_launch
+                WHERE real_launch.account_key={alias}.account_key
+                  AND real_launch.task_id={alias}.task_id
+                  AND real_launch.task_kind={alias}.task_kind
+                  AND real_launch.event_type='launch_started'
+                  AND CASE WHEN json_valid(real_launch.detail_json)
+                           THEN COALESCE(
+                               json_extract(real_launch.detail_json, '$.imported'), 0
+                           ) ELSE 0 END != 1
+                  AND ABS(real_launch.event_ts - {alias}.event_ts) <= {dedup_seconds}
+            )
+        )
+    """
+
+
+def _event_detail(row: sqlite3.Row) -> Dict[str, Any]:
+    try:
+        detail = json.loads(row["detail_json"] or "{}")
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    return detail if isinstance(detail, dict) else {}
+
+
 def _historical_account_key(
     conn: sqlite3.Connection, account_id: str, config: Dict[str, Any]
 ) -> str:
@@ -474,15 +510,17 @@ def reserve_launch(
             return LaunchDecision(False, state, "距上次浏览器启动不足 90 分钟", retry_at)
 
         launch_count = conn.execute(
-            """SELECT COUNT(*) FROM xhs_risk_events
-               WHERE account_key=? AND event_type='launch_started' AND event_ts>=?""",
+            f"""SELECT COUNT(*) FROM xhs_risk_events AS launch
+               WHERE launch.account_key=? AND launch.event_ts>=?
+                 AND {_effective_launch_event_predicate()}""",
             (account_key, now - LAUNCH_WINDOW_SECONDS),
         ).fetchone()[0]
         if launch_count >= MAX_LAUNCHES_PER_WINDOW:
             threshold_event = conn.execute(
-                """SELECT event_ts FROM xhs_risk_events
-                   WHERE account_key=? AND event_type='launch_started' AND event_ts>=?
-                   ORDER BY event_ts ASC LIMIT 1 OFFSET ?""",
+                f"""SELECT launch.event_ts FROM xhs_risk_events AS launch
+                   WHERE launch.account_key=? AND launch.event_ts>=?
+                     AND {_effective_launch_event_predicate()}
+                   ORDER BY launch.event_ts ASC LIMIT 1 OFFSET ?""",
                 (account_key, now - LAUNCH_WINDOW_SECONDS, launch_count - MAX_LAUNCHES_PER_WINDOW),
             ).fetchone()[0]
             retry_at = float(threshold_event or now) + LAUNCH_WINDOW_SECONDS
@@ -511,9 +549,9 @@ def reserve_launch(
             ).fetchone()[0]
             batch_floor = max(float(last_comment or 0), float(row["last_risk_at"] or 0))
             search_sessions = conn.execute(
-                """SELECT COUNT(*) FROM xhs_risk_events
-                   WHERE account_key=? AND event_type='launch_started'
-                     AND task_kind='search' AND event_ts>?""",
+                f"""SELECT COUNT(*) FROM xhs_risk_events AS launch
+                   WHERE launch.account_key=? AND launch.task_kind='search'
+                     AND launch.event_ts>? AND {_effective_launch_event_predicate()}""",
                 (account_key, batch_floor),
             ).fetchone()[0]
             if search_sessions < MIN_SEARCH_SESSIONS_BETWEEN_COMMENTS:
@@ -551,17 +589,80 @@ def confirm_launch(task_id: str, user_data_dir: str, now: Optional[float] = None
     conn.execute("BEGIN IMMEDIATE")
     row = _ensure_state(conn, account_key, now)
     if row["active_task_id"] == task_id:
-        conn.execute(
-            """UPDATE xhs_risk_state SET last_task_started_at=?, last_browser_launch_at=?,
-               reservation_until=?, updated_at=? WHERE account_key=?""",
-            (now, now, now + RUNNING_LEASE_TTL_SECONDS, now, account_key),
+        reservation = conn.execute(
+            """SELECT event_ts, detail_json FROM xhs_risk_events
+               WHERE account_key=? AND task_id=? AND event_type='launch_reserved'
+               ORDER BY event_ts DESC, id DESC LIMIT 1""",
+            (account_key, task_id),
+        ).fetchone()
+        session_floor = float(
+            reservation["event_ts"] if reservation else now - RESERVATION_TTL_SECONDS
         )
-        conn.execute(
-            """INSERT INTO xhs_risk_events
-               (account_key, task_id, task_kind, event_type, event_ts)
-               VALUES (?, ?, ?, 'launch_started', ?)""",
-            (account_key, task_id, row["active_task_kind"], now),
+        reservation_detail = _event_detail(reservation) if reservation else {}
+        launch_events = conn.execute(
+            """SELECT id, event_ts, detail_json FROM xhs_risk_events
+               WHERE account_key=? AND task_id=? AND event_type='launch_started'
+                 AND event_ts>=?
+               ORDER BY event_ts DESC, id DESC""",
+            (account_key, task_id, session_floor),
+        ).fetchall()
+        real_launch = next(
+            (event for event in launch_events if not _event_detail(event).get("imported")),
+            None,
         )
+        imported_launch = next(
+            (
+                event
+                for event in launch_events
+                if _event_detail(event).get("imported")
+                and _event_detail(event).get("lower_bound")
+            ),
+            None,
+        )
+        if real_launch:
+            conn.execute(
+                """UPDATE xhs_risk_state SET reservation_until=?, updated_at=?
+                   WHERE account_key=?""",
+                (now + RUNNING_LEASE_TTL_SECONDS, now, account_key),
+            )
+        else:
+            conn.execute(
+                """UPDATE xhs_risk_state
+                   SET last_task_started_at=?, last_browser_launch_at=?,
+                       reservation_until=?, updated_at=? WHERE account_key=?""",
+                (now, now, now + RUNNING_LEASE_TTL_SECONDS, now, account_key),
+            )
+            detail = {}
+            reservation_id = reservation_detail.get("reservation_id")
+            if reservation_id:
+                detail["reservation_id"] = reservation_id
+            if imported_launch:
+                detail["reconciled_import"] = True
+                conn.execute(
+                    """UPDATE xhs_risk_events
+                       SET account_key=?, task_kind=?, event_ts=?, detail_json=?
+                       WHERE id=?""",
+                    (
+                        account_key,
+                        row["active_task_kind"],
+                        now,
+                        json.dumps(detail, ensure_ascii=False, separators=(",", ":")),
+                        imported_launch["id"],
+                    ),
+                )
+            else:
+                conn.execute(
+                    """INSERT INTO xhs_risk_events
+                       (account_key, task_id, task_kind, event_type, event_ts, detail_json)
+                       VALUES (?, ?, ?, 'launch_started', ?, ?)""",
+                    (
+                        account_key,
+                        task_id,
+                        row["active_task_kind"],
+                        now,
+                        json.dumps(detail, ensure_ascii=False, separators=(",", ":")),
+                    ),
+                )
     conn.commit()
     conn.close()
 
@@ -792,16 +893,18 @@ def get_status(user_data_dir: str = "%s_user_data_dir_account02", now: Optional[
     row = _ensure_state(conn, account_key, now)
     state = _effective_state(row, now)
     launches = conn.execute(
-        """SELECT COUNT(*) FROM xhs_risk_events
-           WHERE account_key=? AND event_type='launch_started' AND event_ts>=?""",
+        f"""SELECT COUNT(*) FROM xhs_risk_events AS launch
+           WHERE launch.account_key=? AND launch.event_ts>=?
+             AND {_effective_launch_event_predicate()}""",
         (account_key, now - LAUNCH_WINDOW_SECONDS),
     ).fetchone()[0]
     launch_budget_retry_at = 0.0
     if launches >= MAX_LAUNCHES_PER_WINDOW:
         threshold_event = conn.execute(
-            """SELECT event_ts FROM xhs_risk_events
-               WHERE account_key=? AND event_type='launch_started' AND event_ts>=?
-               ORDER BY event_ts ASC LIMIT 1 OFFSET ?""",
+            f"""SELECT launch.event_ts FROM xhs_risk_events AS launch
+               WHERE launch.account_key=? AND launch.event_ts>=?
+                 AND {_effective_launch_event_predicate()}
+               ORDER BY launch.event_ts ASC LIMIT 1 OFFSET ?""",
             (account_key, now - LAUNCH_WINDOW_SECONDS, launches - MAX_LAUNCHES_PER_WINDOW),
         ).fetchone()[0]
         launch_budget_retry_at = float(threshold_event or 0) + LAUNCH_WINDOW_SECONDS

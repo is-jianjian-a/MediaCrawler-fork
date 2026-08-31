@@ -419,3 +419,96 @@ def test_launch_budget_retry_waits_until_count_falls_below_limit(monkeypatch, tm
     # At the configured limit, the oldest launch must leave the rolling
     # window before another launch is allowed.
     assert status["launch_budget_retry_at"] == start + policy.LAUNCH_WINDOW_SECONDS
+
+
+def test_current_task_import_is_promoted_to_one_real_launch(monkeypatch, tmp_path):
+    _temp_policy(monkeypatch, tmp_path)
+    now = 1_800_000_000.0
+    decision = policy.reserve_launch(
+        task_id="current-search",
+        task_kind="search",
+        config=_search_config(),
+        now=now,
+    )
+    assert decision.allowed
+
+    conn = sqlite3.connect(policy.RISK_DB)
+    conn.execute(
+        """CREATE TABLE crawl_tasks (
+               id TEXT, account_id TEXT, created_at REAL, started_at REAL,
+               completed_at REAL, config_json TEXT, exit_code INTEGER
+           )"""
+    )
+    conn.execute(
+        "INSERT INTO crawl_tasks VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (
+            "current-search",
+            "",
+            now,
+            now,
+            None,
+            json.dumps(_search_config()),
+            None,
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    # Simulate the worker's fresh process: initialization imports the task row
+    # before confirm_launch records the real browser session.
+    policy._INITIALIZED_DATABASES.discard(os.path.abspath(policy.RISK_DB))
+    policy.confirm_launch(
+        "current-search", "%s_user_data_dir_account02", now=now + 1
+    )
+    policy.confirm_launch(
+        "current-search", "%s_user_data_dir_account02", now=now + 2
+    )
+
+    conn = sqlite3.connect(policy.RISK_DB)
+    rows = conn.execute(
+        """SELECT detail_json FROM xhs_risk_events
+           WHERE task_id='current-search' AND event_type='launch_started'"""
+    ).fetchall()
+    conn.close()
+
+    assert len(rows) == 1
+    detail = json.loads(rows[0][0])
+    assert detail["reservation_id"] == decision.reservation_id
+    assert detail["reconciled_import"] is True
+    status = policy.get_status(now=now + 2)
+    assert status["launches_12h"] == 1
+    assert status["last_browser_launch_at"] == now + 1
+
+
+def test_launch_budget_logically_deduplicates_existing_import_pair(
+    monkeypatch, tmp_path
+):
+    _temp_policy(monkeypatch, tmp_path)
+    now = 1_800_000_000.0
+    account_key = "xhs:%s_user_data_dir_account02"
+    conn = sqlite3.connect(policy.RISK_DB)
+    conn.executemany(
+        """INSERT INTO xhs_risk_events
+           (account_key, task_id, task_kind, event_type, event_ts, detail_json)
+           VALUES (?, ?, 'search', 'launch_started', ?, ?)""",
+        [
+            (
+                account_key,
+                "paired",
+                now,
+                '{"imported":true,"lower_bound":true}',
+            ),
+            (account_key, "paired", now + 1, "{}"),
+            (
+                account_key,
+                "historical-only",
+                now - 10,
+                '{"imported":true,"lower_bound":true}',
+            ),
+        ],
+    )
+    conn.commit()
+    conn.close()
+
+    status = policy.get_status(now=now + 2)
+    assert status["launches_12h"] == 2
