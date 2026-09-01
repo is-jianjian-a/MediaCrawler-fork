@@ -45,7 +45,7 @@
 
 ## 账号级状态机（Dashboard 搜索与评论共享）
 
-`dashboard/risk_policy.py` 将同一账号的搜索任务和评论任务放在同一个持久化预算里；不同注册账号拥有互不累计的状态。状态写入 `dashboard/database/task_manager.db`，Dashboard 或 worker 重启后不会清零。多账号的 Profile、内容库、日志、调度和故障边界见 [小红书多账号隔离并行运行](xhs_multi_account_isolation.md)。
+`dashboard/risk_policy.py` 将同一账号的搜索任务和评论任务放在同一个持久化预算里；不同注册账号拥有互不累计的状态。状态写入 `~/Library/Application Support/MediaCrawler/database/task_manager.db`，Dashboard 或 worker 重启后不会清零。多账号的 Profile、内容库、日志、调度和故障边界见 [小红书多账号隔离并行运行](xhs_multi_account_isolation.md)。
 
 | 状态 | 含义 | 自动动作 |
 |---|---|---|
@@ -80,7 +80,7 @@ Dashboard 后台每 30 秒检查一次 `start_mode=auto` 的待处理队列。�
 ## 证据位置与限制
 
 - 关键词任务：`dashboard/logs/crawl-*.log`，以日志起止墙钟、搜索页累计和任务末尾 API 摘要计算。
-- 评论补抓任务：`dashboard/database/task_manager.db` 的任务起止、帖子和评论写入字段。
+- 评论补抓任务：`~/Library/Application Support/MediaCrawler/database/task_manager.db` 的任务起止、帖子和评论写入字段。
 - 风控事件：`dashboard/logs/crawl-030f42fa.log` 第 2196–2249 行附近。
 - 风控台账：`database/risk_control_log.md`。
 

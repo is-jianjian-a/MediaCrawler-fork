@@ -577,7 +577,7 @@ uv run python main.py --init_db sqlite
 > | `ENABLE_GET_SUB_COMMENTS` | `False` | 是否抓取子评论 |
 > | `SAVE_DATA_OPTION` | `"sqlite"` | 存储方式：sqlite / csv / json / jsonl / excel / postgres / mongodb |
 >
-> 默认存储数据库：`database/sqlite_tables.db`（SQLite）
+> 默认存储数据库：`~/data/datasets/mediacrawler/sqlite_tables.db`（SQLite）
 
 ```bash
 cd MediaCrawler

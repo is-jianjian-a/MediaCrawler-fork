@@ -8,9 +8,9 @@ Dashboard 现在把“小红书账号”作为一级运行单元。目标是让�
 
 | 层面 | 隔离方式 | 强制约束 |
 |---|---|---|
-| 账号身份 | `dashboard/database/task_manager.db` 中的 `xhs_accounts` 注册表 | 任务只保存 `account_id`；运行时的 Profile、浏览器和数据库路径由注册表覆盖，HTTP 请求不能临时改路径 |
-| 登录态 | 每账号一个 `browser_data/...` Profile | Profile 模板必须位于仓库 `browser_data` 下；解析后的物理目录必须唯一 |
-| 浏览器 | 明确指定隔离 Chromium | 禁止系统 Chrome、CDP、9222 和无路径回退 |
+| 账号身份 | `~/Library/Application Support/MediaCrawler/database/task_manager.db` 中的 `xhs_accounts` 注册表 | 任务只保存 `account_id`；运行时的 Profile、浏览器和数据库路径由注册表覆盖，HTTP 请求不能临时改路径 |
+| 登录态 | 每账号一个 `~/Library/Application Support/MediaCrawler/browser-data/...` Profile | Profile 模板必须位于应用状态目录的 `browser-data` 下；解析后的物理目录必须唯一 |
+| 浏览器 | 明确指定隔离 Chromium | 评论任务关闭 CDP；显式 CDP 也只能使用隔离 Chromium，禁止系统 Chrome 和无路径回退 |
 | 并发 | 同账号 search/comment 共用一个串行 slot，不同账号可并行 | 默认全局最多 2 个活跃账号，可用 `MEDIACRAWLER_MAX_PARALLEL_XHS_ACCOUNTS` 调整 |
 | 物理运行锁 | Profile 对应一个 `flock` 文件锁 | 即使两个 Dashboard 实例竞争，同一物理 Profile 也只能被一个 worker 打开 |
 | 内容数据 | 新账号使用 `database/accounts/<account_id>/sqlite_tables.db` | 每个 SQLite 独立 WAL 和 busy timeout；A 库被锁或损坏不会阻塞 B 库 |
@@ -54,7 +54,7 @@ Dashboard 现在把“小红书账号”作为一级运行单元。目标是让�
 
 ## 历史数据迁移
 
-- 首次升级时账号 `02` 先以 `legacy_shared` 读取历史 `database/sqlite_tables.db`；确认无活跃任务后，运行 `.venv/bin/python dashboard/account_registry.py migrate-default`，通过 SQLite 在线备份生成 `database/accounts/02/sqlite_tables.db`，完整性校验通过后再原子切换注册表。
+- 首次升级时账号 `02` 先以 `legacy_shared` 读取历史 `~/data/datasets/mediacrawler/sqlite_tables.db`；确认无活跃任务后，运行 `.venv/bin/python dashboard/account_registry.py migrate-default`，通过 SQLite 在线备份生成 `~/data/datasets/mediacrawler/accounts/02/sqlite_tables.db`，完整性校验通过后再原子切换注册表。
 - 迁移只复制并改写账号路由，不移动、不改写、不删除原历史汇总库；原库继续作为回滚和跨账号历史审计源，不能再作为新任务的并行写入目标。
 - 能从历史任务 Profile 明确识别的账号会回填到任务的 `account_id`。
 - 缺失或无法识别 Profile 的历史任务标记为 `legacy-default` 或 `legacy-<hash>`，不会猜成账号 `02`。

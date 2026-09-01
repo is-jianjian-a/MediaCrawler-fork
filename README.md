@@ -33,6 +33,10 @@
 
 一个功能强大的**多平台自媒体数据采集工具**，支持小红书、抖音、快手、B站、微博、贴吧、知乎等主流平台的公开信息抓取。
 
+### 本机数据边界
+
+本仓库只保存源码、测试和文档。采集内容默认保存在 `~/data/datasets/mediacrawler/`；任务调度、限流状态和隔离浏览器登录态保存在 `~/Library/Application Support/MediaCrawler/`；日志保存在 `~/Library/Logs/MediaCrawler/`。这些目录不通过 Git 管理，详见 [本机数据与运行状态](docs/local-data-boundary.md)。
+
 ### 🔧 技术原理
 
 - **核心技术**：基于 [Playwright](https://playwright.dev/) 浏览器自动化框架登录保存登录态
