@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import pytest
+
 from media_platform.tieba.help import TieBaExtractor
 from model.m_baidu_tieba import TiebaComment
 
@@ -10,7 +12,10 @@ FIXTURE_DIR = Path(__file__).parent.parent / "media_platform" / "tieba" / "test_
 
 
 def read_fixture(name: str) -> str:
-    return (FIXTURE_DIR / name).read_text(encoding="utf-8")
+    path = FIXTURE_DIR / name
+    if not path.exists():
+        pytest.skip(f"optional captured HTML fixture is not distributed: {name}")
+    return path.read_text(encoding="utf-8")
 
 
 def test_extract_search_note_list_from_keyword_page():
