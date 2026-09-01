@@ -133,6 +133,17 @@ def test_runner_records_risk_control_as_failed(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(crawl_runner, "start_crawl_task", lambda *args: None)
     monkeypatch.setattr(crawl_runner, "set_crawl_worker_pid", lambda *args: None)
+    account = {
+        "account_id": "test",
+        "user_data_dir": "%s_user_data_dir_test",
+        "browser_path": str(tmp_path / "isolated-chromium"),
+        "sqlite_db_path": str(tmp_path / "content.db"),
+    }
+    monkeypatch.setattr(
+        crawl_runner,
+        "bind_task_config",
+        lambda *args, **kwargs: ({**account, "get_comments": True}, account),
+    )
     monkeypatch.setattr(
         crawl_runner,
         "finish_crawl_task",

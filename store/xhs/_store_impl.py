@@ -19,6 +19,7 @@
 # @Author  : persist1@126.com
 # @Time    : 2025/9/5 19:34
 # @Desc    : Xiaohongshu storage implementation class
+import hashlib
 import json
 import os
 import re
@@ -31,7 +32,14 @@ from sqlalchemy.orm import Session
 
 from base.base_crawler import AbstractStore
 from database.db_session import get_session
-from database.models import XhsNote, XhsNoteComment, XhsCreator, XhsNoteKeywordHit
+from database.models import (
+    XhsCommentObservation,
+    XhsCreator,
+    XhsNote,
+    XhsNoteComment,
+    XhsNoteKeywordHit,
+    XhsNoteObservation,
+)
 
 from tools.async_file_writer import AsyncFileWriter
 from tools.time_util import get_current_timestamp
@@ -64,6 +72,28 @@ def _parse_count(value) -> int:
         return int(float(value))
     except (ValueError, TypeError):
         return 0
+
+
+def _payload_hash(item: Dict) -> str:
+    raw_data = item.get("raw_data")
+    if isinstance(raw_data, str) and raw_data:
+        payload = raw_data
+    elif raw_data:
+        payload = json.dumps(raw_data, ensure_ascii=False, sort_keys=True, default=str)
+    else:
+        payload = json.dumps(item, ensure_ascii=False, sort_keys=True, default=str)
+    return hashlib.sha256(payload.encode("utf-8", errors="replace")).hexdigest()
+
+
+def _runtime_provenance() -> Dict[str, str]:
+    return {
+        "run_id": str(os.getenv("MEDIACRAWLER_RUN_ID", "") or "").strip(),
+        "task_id": str(os.getenv("MEDIACRAWLER_TASK_ID", "") or "").strip(),
+        "account_id": str(get_current_account() or "default").strip(),
+        "profile_id": str(os.getenv("MEDIACRAWLER_PROFILE_ID", "") or "").strip(),
+        "store_id": str(os.getenv("MEDIACRAWLER_STORE_ID", "") or "").strip(),
+        "route_id": str(os.getenv("MEDIACRAWLER_ROUTE_ID", "") or "").strip(),
+    }
 
 
 class XhsCsvStoreImplement(AbstractStore):
@@ -164,6 +194,66 @@ class XhsDbStoreImplement(AbstractStore):
                 await self.update_content(session, content_item)
             else:
                 await self.add_content(session, content_item)
+            await self.record_note_observation(session, content_item)
+
+    async def record_note_observation(
+        self,
+        session: AsyncSession,
+        content_item: Dict,
+        *,
+        observation_kind: str = "detail",
+        keyword: str = "",
+        search_page: int = 0,
+        rank_in_page: int = 0,
+    ) -> None:
+        provenance = _runtime_provenance()
+        run_id = provenance["run_id"]
+        note_id = str(content_item.get("note_id") or "").strip()
+        if not run_id or not note_id:
+            return
+        effective_keyword = str(
+            keyword or content_item.get("keyword") or content_item.get("source_keyword") or ""
+        )
+        now_ts = int(get_current_timestamp())
+        stmt = select(XhsNoteObservation).where(
+            XhsNoteObservation.run_id == run_id,
+            XhsNoteObservation.note_id == note_id,
+            XhsNoteObservation.keyword == effective_keyword,
+            XhsNoteObservation.observation_kind == observation_kind,
+        )
+        existing = (await session.execute(stmt)).scalar_one_or_none()
+        values = {
+            "task_id": provenance["task_id"],
+            "account_id": provenance["account_id"],
+            "profile_id": provenance["profile_id"],
+            "store_id": provenance["store_id"],
+            "route_id": provenance["route_id"],
+            "keyword": effective_keyword,
+            "observation_kind": observation_kind,
+            "search_page": int(search_page or 0),
+            "rank_in_page": int(rank_in_page or 0),
+            "last_seen_ts": now_ts,
+            "payload_hash": _payload_hash(content_item),
+            "legacy_source_label": str(
+                content_item.get("crawler_account") or provenance["account_id"]
+            ),
+        }
+        if existing:
+            await session.execute(
+                update(XhsNoteObservation)
+                .where(XhsNoteObservation.id == existing.id)
+                .values(**values, seen_count=(existing.seen_count or 0) + 1)
+            )
+            return
+        session.add(
+            XhsNoteObservation(
+                run_id=run_id,
+                note_id=note_id,
+                observed_at=now_ts,
+                seen_count=1,
+                **values,
+            )
+        )
 
     async def store_keyword_hit(self, hit_item: Dict):
         note_id = hit_item.get("note_id")
@@ -181,6 +271,14 @@ class XhsDbStoreImplement(AbstractStore):
             )
             result = await session.execute(stmt)
             existing_hit = result.scalar_one_or_none()
+            await self.record_note_observation(
+                session,
+                hit_item,
+                observation_kind="search_hit",
+                keyword=str(keyword),
+                search_page=int(hit_item.get("search_page") or 0),
+                rank_in_page=int(hit_item.get("rank_in_page") or 0),
+            )
             if existing_hit:
                 update_stmt = (
                     update(XhsNoteKeywordHit)
@@ -270,6 +368,60 @@ class XhsDbStoreImplement(AbstractStore):
                 await self.update_comment(session, comment_item)
             else:
                 await self.add_comment(session, comment_item)
+            await self.record_comment_observation(session, comment_item)
+
+    async def record_comment_observation(
+        self, session: AsyncSession, comment_item: Dict
+    ) -> None:
+        provenance = _runtime_provenance()
+        run_id = provenance["run_id"]
+        comment_id = str(comment_item.get("comment_id") or "").strip()
+        note_id = str(comment_item.get("note_id") or "").strip()
+        if not run_id or not comment_id or not note_id:
+            return
+        now_ts = int(get_current_timestamp())
+        observation_kind = (
+            "sub_comment"
+            if str(comment_item.get("parent_comment_id") or "").strip()
+            else "comment_page"
+        )
+        stmt = select(XhsCommentObservation).where(
+            XhsCommentObservation.run_id == run_id,
+            XhsCommentObservation.comment_id == comment_id,
+            XhsCommentObservation.observation_kind == observation_kind,
+        )
+        existing = (await session.execute(stmt)).scalar_one_or_none()
+        values = {
+            "task_id": provenance["task_id"],
+            "account_id": provenance["account_id"],
+            "profile_id": provenance["profile_id"],
+            "store_id": provenance["store_id"],
+            "route_id": provenance["route_id"],
+            "note_id": note_id,
+            "parent_comment_id": str(comment_item.get("parent_comment_id") or ""),
+            "observation_kind": observation_kind,
+            "last_seen_ts": now_ts,
+            "payload_hash": _payload_hash(comment_item),
+            "legacy_source_label": str(
+                comment_item.get("crawler_account") or provenance["account_id"]
+            ),
+        }
+        if existing:
+            await session.execute(
+                update(XhsCommentObservation)
+                .where(XhsCommentObservation.id == existing.id)
+                .values(**values, seen_count=(existing.seen_count or 0) + 1)
+            )
+            return
+        session.add(
+            XhsCommentObservation(
+                run_id=run_id,
+                comment_id=comment_id,
+                observed_at=now_ts,
+                seen_count=1,
+                **values,
+            )
+        )
 
     async def get_comment_ids_by_note_id(self, note_id: str) -> Set[str]:
         """Fetch all comment_ids for a given note_id."""

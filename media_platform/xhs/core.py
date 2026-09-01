@@ -39,6 +39,7 @@ from model.m_xiaohongshu import NoteUrlInfo, CreatorUrlInfo
 from proxy.proxy_ip_pool import IpInfoModel, create_ip_pool
 from store import xhs as xhs_store
 from tools import utils
+from tools.browser_safety import BrowserPathError, validate_automation_browser_path
 from tools.crawler_util import check_and_adjust_crawler_count, is_db_storage, smart_sleep
 from tools.cdp_browser import CDPBrowserManager
 from var import crawler_type_var, source_keyword_var, task_id_var
@@ -903,17 +904,15 @@ class XiaoHongShuCrawler(AbstractCrawler):
         viewport = utils.get_random_viewport()
         launch_options = {}
         if config.CUSTOM_BROWSER_PATH:
-            browser_path = os.path.realpath(os.path.expanduser(config.CUSTOM_BROWSER_PATH))
-            system_chrome_path = os.path.realpath(
-                "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-            )
-            if browser_path == system_chrome_path:
-                raise RuntimeError(
-                    "system Google Chrome is forbidden; configure an isolated Chromium"
+            try:
+                browser_path = validate_automation_browser_path(
+                    config.CUSTOM_BROWSER_PATH
                 )
+            except BrowserPathError as exc:
+                raise RuntimeError(str(exc)) from exc
             launch_options["executable_path"] = browser_path
         if config.SAVE_LOGIN_STATE:
-            user_data_dir = os.path.join(os.getcwd(), "browser_data", config.USER_DATA_DIR % config.PLATFORM)
+            user_data_dir = os.path.join(str(config.BROWSER_DATA_ROOT), config.USER_DATA_DIR % config.PLATFORM)
             browser_context = await chromium.launch_persistent_context(
                 user_data_dir=user_data_dir,
                 accept_downloads=True,

@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 import os
+
+from .runtime_paths import EXPORT_ROOT
 # Copyright (c) 2025 relakkes@gmail.com
 #
 # This file is part of MediaCrawler project.
@@ -139,7 +141,7 @@ AUTO_CLOSE_BROWSER = os.getenv("MEDIACRAWLER_AUTO_CLOSE_BROWSER", "false").lower
 SAVE_DATA_OPTION = "sqlite"  # csv or db or json or jsonl or sqlite or excel or postgres
 
 # Data saving path, if not specified by default, it will be saved to the data folder.
-SAVE_DATA_PATH = ""
+SAVE_DATA_PATH = os.getenv("MEDIACRAWLER_SAVE_DATA_PATH", str(EXPORT_ROOT))
 
 # Browser file configuration cached by the user's browser
 # 旧账号浏览器数据目录（已备份）

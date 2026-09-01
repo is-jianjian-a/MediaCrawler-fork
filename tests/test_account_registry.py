@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from dashboard import account_registry as registry
+from tools import browser_safety
 from dashboard import profile_lock
 
 
@@ -106,7 +107,7 @@ def test_system_chrome_is_always_rejected(monkeypatch, tmp_path):
     fake_system = tmp_path / "Google Chrome"
     fake_system.write_text("chrome", encoding="utf-8")
     fake_system.chmod(0o755)
-    monkeypatch.setattr(registry, "SYSTEM_CHROME_PATH", fake_system)
+    monkeypatch.setattr(browser_safety, "SYSTEM_GOOGLE_CHROME", fake_system)
     with pytest.raises(registry.AccountRegistryError, match="system Google Chrome"):
         registry.validate_browser_path(str(fake_system))
 

@@ -63,12 +63,21 @@ try:
     from dashboard.profile_lock import acquire_profile_lock
 except ModuleNotFoundError:
     from profile_lock import acquire_profile_lock  # type: ignore[no-redef]
+try:
+    from dashboard.xhs_data_model import finish_task_run, mark_task_run_running
+except ModuleNotFoundError:
+    from xhs_data_model import (  # type: ignore[no-redef]
+        finish_task_run,
+        mark_task_run_running,
+    )
 import logging
 logger = logging.getLogger("MediaCrawler")
 
+from config.runtime_paths import LOG_ROOT
+
 
 DASHBOARD_DIR = MEDIACRAWLER_ROOT / "dashboard"
-LOG_DIR = DASHBOARD_DIR / "logs"
+LOG_DIR = LOG_ROOT / "dashboard"
 MAX_START_PAGE = 1000
 
 
@@ -202,6 +211,7 @@ def _build_command(task: dict) -> tuple[list[str], dict]:
 
 
 def run_task(task_id: str) -> int:
+    run_id = str(os.getenv("MEDIACRAWLER_RUN_ID", "") or "").strip()
     task = get_crawl_task(task_id)
     if not task:
         print(f"crawl task not found: {task_id}", file=sys.stderr)
@@ -216,6 +226,9 @@ def run_task(task_id: str) -> int:
         )
     except AccountRegistryError as exc:
         finish_crawl_task(task_id, 1, str(exc))
+        finish_task_run(
+            run_id, exit_code=1, status="failed", stop_reason=str(exc)
+        )
         return 1
     task = dict(task)
     task["config"] = runtime_config
@@ -223,17 +236,27 @@ def run_task(task_id: str) -> int:
     if not runtime_config.get("dry_run"):
         if task.get("status") != "starting":
             finish_crawl_task(task_id, 1, "worker expected task status starting")
+            finish_task_run(
+                run_id,
+                exit_code=1,
+                status="failed",
+                stop_reason="worker expected task status starting",
+            )
             return 1
         try:
             assert_launch_reserved(task_id, "search", account["user_data_dir"])
         except RuntimeError as exc:
             finish_crawl_task(task_id, 1, str(exc))
+            finish_task_run(
+                run_id, exit_code=1, status="failed", stop_reason=str(exc)
+            )
             return 1
 
     account_log_dir = LOG_DIR / "accounts" / account["account_id"]
     account_log_dir.mkdir(parents=True, exist_ok=True)
     log_path = account_log_dir / f"{task_id}.log"
     start_crawl_task(task_id, str(log_path), os.getpid())
+    mark_task_run_running(run_id, worker_pid=os.getpid())
 
     command, env = _build_command(task)
     config = runtime_config
@@ -244,11 +267,13 @@ def run_task(task_id: str) -> int:
             log.write("Command: " + " ".join(command) + "\n")
             log.write("Keywords: " + ",".join(task.get("keywords") or []) + "\n")
             log.write(f"Start page: {env['MEDIACRAWLER_START_PAGE']}\n")
+            log.write(f"Run: {run_id or '<legacy-untracked>'}\n")
             log.write("Config: " + repr(config) + "\n\n")
             log.flush()
             if config.get("dry_run"):
                 log.write("[dry-run] Command was not executed.\n")
                 finish_crawl_task(task_id, 0)
+                finish_task_run(run_id, exit_code=0, status="completed")
                 return 0
             with acquire_profile_lock(
                 account_id=account["account_id"],
@@ -278,6 +303,18 @@ def run_task(task_id: str) -> int:
                 exit_code,
                 error,
             )
+            final_task = get_crawl_task(task_id) or {}
+            run_status = (
+                "cancelled"
+                if final_task.get("status") == "cancelled"
+                else ("completed" if exit_code == 0 else "failed")
+            )
+            finish_task_run(
+                run_id,
+                exit_code=exit_code,
+                status=run_status,
+                stop_reason=error,
+            )
             record_completion(
                 task_id=task_id,
                 task_kind="search",
@@ -291,6 +328,9 @@ def run_task(task_id: str) -> int:
         # failure instead of using the starting-only failure path and leaving a
         # stale running task behind.
         finish_crawl_task(task_id, 1, str(exc))
+        finish_task_run(
+            run_id, exit_code=1, status="failed", stop_reason=str(exc)
+        )
         record_completion(
             task_id=task_id,
             task_kind="search",

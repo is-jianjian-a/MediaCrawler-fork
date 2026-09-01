@@ -6,9 +6,9 @@ from unittest import mock
 
 import pytest
 
+from dashboard import comment_fetcher, crawl_runner, server
 from dashboard.comment_fetcher import CommentTaskExecutor
 from dashboard.crawl_runner import _build_command
-from dashboard import server
 
 
 def _browser(tmp_path: Path) -> str:
@@ -45,8 +45,8 @@ def test_search_worker_explicitly_overrides_parent_account_route(monkeypatch, tm
     assert env["MEDIACRAWLER_BROWSER_PATH"] == browser
     assert env["MEDIACRAWLER_ENABLE_CDP"] == "false"
     assert env["MEDIACRAWLER_AUTO_CLOSE_BROWSER"] == "true"
-    assert env["MEDIACRAWLER_LOG_PATH"].endswith(
-        "dashboard/logs/accounts/A/crawl-account-a-runtime.log"
+    assert env["MEDIACRAWLER_LOG_PATH"] == str(
+        crawl_runner.LOG_DIR / "accounts/A/crawl-account-a-runtime.log"
     )
 
 
@@ -100,11 +100,50 @@ def test_comment_worker_uses_its_own_account_route(monkeypatch, tmp_path):
     assert env["MEDIACRAWLER_ACCOUNT"] == "B"
     assert env["MEDIACRAWLER_SQLITE_DB_PATH"] == str(db_path)
     assert env["MEDIACRAWLER_USER_DATA_DIR"] == "%s_user_data_dir_accountB"
-    assert env["MEDIACRAWLER_LOG_PATH"].endswith(
-        "dashboard/logs/accounts/B/comment-b-runtime.log"
+    assert env["MEDIACRAWLER_LOG_PATH"] == str(
+        comment_fetcher.LOG_ROOT / "dashboard/accounts/B/comment-b-runtime.log"
     )
     assert env["MEDIACRAWLER_CDP_CONNECT_EXISTING"] == "false"
     assert env["MEDIACRAWLER_AUTO_CLOSE_BROWSER"] == "true"
+
+
+def test_health_uses_recent_task_account_database(monkeypatch, tmp_path):
+    account_db = tmp_path / "accounts" / "A" / "content.db"
+    account_db.parent.mkdir(parents=True)
+    conn = sqlite3.connect(account_db)
+    conn.executescript(
+        """
+        CREATE TABLE xhs_note (note_id TEXT PRIMARY KEY, add_ts INTEGER);
+        CREATE TABLE xhs_note_comment (comment_id TEXT PRIMARY KEY, add_ts INTEGER);
+        INSERT INTO xhs_note VALUES ('latest', 2000000000000);
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setattr(server, "account_db_path", lambda account_id: str(account_db))
+    monkeypatch.setattr(
+        server,
+        "get_crawl_task_health",
+        lambda: {
+            "status": "idle",
+            "label": "当前无运行任务",
+            "active_task": None,
+            "recent_task": {"id": "crawl-a", "account_id": "A", "status": "completed"},
+        },
+    )
+    monkeypatch.setattr(
+        server, "get_process_info", lambda: (False, None, None, None, "unknown")
+    )
+
+    response = server.app.test_client().get("/api/health")
+    payload = response.get_json()
+
+    assert response.status_code == 200
+    assert payload["account_id"] == "A"
+    assert payload["db_connected"] is True
+    assert payload["storage"]["latest_write_ms"] == 2000000000000
+    assert payload["storage"]["quick_check"] == "not_run"
 
 
 def test_account_api_does_not_expose_local_routing_paths():

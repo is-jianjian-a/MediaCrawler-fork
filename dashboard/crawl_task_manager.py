@@ -9,10 +9,10 @@ import time
 import uuid
 from typing import Dict, List, Optional
 
+from config.runtime_paths import TASK_DB
+
 
 MEDIACRAWLER_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DASHBOARD_DIR = os.path.join(MEDIACRAWLER_ROOT, "dashboard")
-TASK_DB = os.path.join(DASHBOARD_DIR, "database", "task_manager.db")
 
 
 def _connect() -> sqlite3.Connection:
@@ -45,7 +45,8 @@ def init_crawl_task_db() -> None:
             exit_code INTEGER,
             stop_requested_at REAL,
             stop_source TEXT,
-            stop_reason TEXT
+            stop_reason TEXT,
+            current_run_id TEXT
         )
         """
     )
@@ -59,6 +60,7 @@ def init_crawl_task_db() -> None:
         "stop_requested_at": "ALTER TABLE crawl_tasks ADD COLUMN stop_requested_at REAL",
         "stop_source": "ALTER TABLE crawl_tasks ADD COLUMN stop_source TEXT",
         "stop_reason": "ALTER TABLE crawl_tasks ADD COLUMN stop_reason TEXT",
+        "current_run_id": "ALTER TABLE crawl_tasks ADD COLUMN current_run_id TEXT",
     }.items():
         if col not in existing_cols:
             conn.execute(ddl)

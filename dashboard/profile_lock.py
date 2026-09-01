@@ -18,6 +18,8 @@ import socket
 import time
 from contextlib import contextmanager
 from pathlib import Path
+
+from config.runtime_paths import STATE_ROOT
 from typing import Iterator, TextIO
 
 try:
@@ -26,7 +28,7 @@ except ModuleNotFoundError:  # Support direct script execution.
     from account_registry import resolve_profile_path  # type: ignore[no-redef]
 
 
-LOCK_DIR = Path(__file__).resolve().parent / "locks"
+LOCK_DIR = STATE_ROOT / "locks"
 
 
 class ProfileLockError(RuntimeError):

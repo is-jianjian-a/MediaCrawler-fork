@@ -21,7 +21,17 @@ import urllib.request
 import asyncio
 from pathlib import Path
 
+MEDIACRAWLER_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DASHBOARD_DIR = os.path.join(MEDIACRAWLER_ROOT, "dashboard")
+for import_root in (MEDIACRAWLER_ROOT, DASHBOARD_DIR):
+    if import_root not in sys.path:
+        sys.path.insert(0, import_root)
+
 from flask import Flask, has_request_context, jsonify, request
+
+from config.runtime_paths import BROWSER_DATA_ROOT, DASHBOARD_DB, LOG_ROOT
+from tools.browser_safety import BrowserPathError, validate_automation_browser_path
+from dashboard.sqlite_maintenance import inspect_sqlite_database
 
 from db import (
     get_crawler_db_path, get_config_values, get_crawler_stats,
@@ -72,6 +82,22 @@ try:
     from dashboard.profile_lock import native_profile_owner
 except ModuleNotFoundError:  # Support `python dashboard/server.py`.
     from profile_lock import native_profile_owner  # type: ignore[no-redef]
+try:
+    from dashboard.xhs_data_model import (
+        begin_task_run,
+        catalog_counts,
+        finish_task_run,
+        init_xhs_data_model_db,
+        list_catalog_sources,
+    )
+except ModuleNotFoundError:  # Support `python dashboard/server.py`.
+    from xhs_data_model import (  # type: ignore[no-redef]
+        begin_task_run,
+        catalog_counts,
+        finish_task_run,
+        init_xhs_data_model_db,
+        list_catalog_sources,
+    )
 from worth_scoring import score_post
 from comment_fetcher import (
     DEFAULT_COMMENT_PUBLISH_DATE_AFTER,
@@ -97,13 +123,12 @@ except ModuleNotFoundError:  # Support `python dashboard/server.py`.
     )
 
 # --- config ---
-PORT = 18998
+PORT = int(os.getenv("MEDIACRAWLER_DASHBOARD_PORT", "18998"))
+if not 1 <= PORT <= 65535:
+    raise ValueError("MEDIACRAWLER_DASHBOARD_PORT must be between 1 and 65535")
 HOST = os.getenv("MEDIACRAWLER_DASHBOARD_HOST", "127.0.0.1")
-MEDIACRAWLER_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-LOG_PATH = os.path.join(MEDIACRAWLER_ROOT, "logs", "crawler.log")
+LOG_PATH = str(LOG_ROOT / "crawler.log")
 
-DASHBOARD_DIR = os.path.join(MEDIACRAWLER_ROOT, "dashboard")
-DASHBOARD_DB = os.path.join(DASHBOARD_DIR, "database", "dashboard.db")
 STATIC_DIR = os.path.join(DASHBOARD_DIR, "static")
 
 SNAPSHOT_INTERVAL = 30
@@ -123,6 +148,7 @@ app = Flask(__name__, static_folder=STATIC_DIR, static_url_path="/static")
 init_task_db()
 init_crawl_task_db()
 init_account_registry_db()
+init_xhs_data_model_db()
 init_risk_policy_db()
 
 
@@ -143,8 +169,8 @@ def _cdp_websocket_from_active_port(port: int):
     candidates = [
         Path.home() / "Library/Application Support/Google/Chrome/DevToolsActivePort",
         Path.home() / "Library/Application Support/Google/Chrome/Default/DevToolsActivePort",
-        Path(MEDIACRAWLER_ROOT) / "browser_data" / "chrome-cdp-debug" / "DevToolsActivePort",
-        Path(MEDIACRAWLER_ROOT) / "browser_data" / f"chrome-cdp-debug-{port}" / "DevToolsActivePort",
+        BROWSER_DATA_ROOT / "chrome-cdp-debug" / "DevToolsActivePort",
+        BROWSER_DATA_ROOT / f"chrome-cdp-debug-{port}" / "DevToolsActivePort",
     ]
     for candidate in candidates:
         try:
@@ -218,7 +244,10 @@ def _chrome_binary_path() -> str:
     ]
     for candidate in candidates:
         if candidate and os.path.exists(candidate):
-            return candidate
+            try:
+                return validate_automation_browser_path(candidate)
+            except BrowserPathError:
+                continue
     raise RuntimeError(
         "Isolated Chromium/Chrome for Testing not found. Set MEDIACRAWLER_BROWSER_PATH "
         "to a crawler-only browser; the user's daily Chrome will not be launched automatically."
@@ -298,7 +327,7 @@ def start_cdp_chrome(preferred_port: int = None):
         os.environ["MEDIACRAWLER_CDP_DEBUG_PORT"] = str(port)
         return {**reusable, "started": False, "message": "CDP already available"}
 
-    user_data_dir = os.path.join(MEDIACRAWLER_ROOT, "browser_data", f"chrome-cdp-debug-{port}")
+    user_data_dir = str(BROWSER_DATA_ROOT / f"chrome-cdp-debug-{port}")
     os.makedirs(user_data_dir, exist_ok=True)
     chrome = _chrome_binary_path()
     command = [
@@ -989,9 +1018,19 @@ def api_activity():
 @app.route("/api/health")
 def api_health():
     keywords, _ = get_config_values()
-    conn = _with_crawler_db()
+    task_health = get_crawl_task_health()
+    active_task = task_health.get("active_task")
+    recent_task = task_health.get("recent_task")
+    selected_account_id = str(
+        request.args.get("account_id", "")
+        or (active_task or {}).get("account_id")
+        or (recent_task or {}).get("account_id")
+        or DEFAULT_ACCOUNT_ID
+    ).strip()
+    conn = _with_crawler_db(selected_account_id)
     db_ok = conn is not None
     last_write = None
+    storage_health = None
     if conn:
         try:
             cur = conn.cursor()
@@ -1010,10 +1049,14 @@ def api_health():
                 last_write = round((time.time() * 1000 - ts) / 1000, 1)
         finally:
             conn.close()
+        try:
+            storage_health = inspect_sqlite_database(
+                account_db_path(selected_account_id),
+                run_quick_check=request.args.get("deep") in ("1", "true", "yes"),
+            )
+        except (OSError, sqlite3.Error, ValueError) as exc:
+            storage_health = {"error": str(exc)}
     alive, _, _, _, platform = get_process_info()
-    task_health = get_crawl_task_health()
-    active_task = task_health.get("active_task")
-    recent_task = task_health.get("recent_task")
 
     status = task_health["status"]
     if not db_ok:
@@ -1031,7 +1074,9 @@ def api_health():
     return jsonify({
         "status": status,
         "label": task_health["label"],
+        "account_id": selected_account_id,
         "db_connected": db_ok,
+        "storage": storage_health,
         "crawler_alive": alive,
         "crawler_platform": platform,
         "last_write_seconds_ago": last_write,
@@ -1152,20 +1197,61 @@ def api_list_tasks():
 def api_list_xhs_accounts():
     """Expose only non-sensitive routing state to the loopback Dashboard."""
     accounts = []
+    historical_placeholders = []
     for account in list_accounts(include_disabled=True):
-        accounts.append(
+        payload = {
+            "account_id": account["account_id"],
+            "display_name": account["display_name"],
+            "enabled": account["enabled"],
+            "record_kind": account.get("record_kind", "account"),
+            "identity_status": account.get("identity_status", "unverified"),
+            "storage_mode": account["storage_mode"],
+            "profile_id": account.get("active_profile_id", ""),
+            "store_id": account.get("active_store_id", ""),
+            "route_id": account.get("active_route_id", ""),
+            "profile_exists": account["profile_exists"],
+            "content_db_exists": account["content_db_exists"],
+            "profile_in_use": bool(native_profile_owner(account["user_data_dir"])),
+            "risk_policy": get_risk_policy_status(account["user_data_dir"]),
+        }
+        if payload["record_kind"] == "historical_placeholder":
+            historical_placeholders.append(payload)
+        else:
+            accounts.append(payload)
+    return jsonify({
+        "accounts": accounts,
+        "historical_placeholders": historical_placeholders,
+        "default_account_id": DEFAULT_ACCOUNT_ID,
+    })
+
+
+@app.route("/api/xhs-data-catalog")
+def api_xhs_data_catalog():
+    """Report deduplicated cross-store totals without exposing local paths."""
+    sources = []
+    for source in list_catalog_sources(existing_only=False):
+        sources.append(
             {
-                "account_id": account["account_id"],
-                "display_name": account["display_name"],
-                "enabled": account["enabled"],
-                "storage_mode": account["storage_mode"],
-                "profile_exists": account["profile_exists"],
-                "content_db_exists": account["content_db_exists"],
-                "profile_in_use": bool(native_profile_owner(account["user_data_dir"])),
-                "risk_policy": get_risk_policy_status(account["user_data_dir"]),
+                "store_id": source["store_id"],
+                "account_id": source.get("account_id"),
+                "display_name": source["display_name"],
+                "store_kind": source["store_kind"],
+                "read_only": bool(source["read_only"]),
+                "catalog_enabled": bool(source["catalog_enabled"]),
+                "priority": source["priority"],
+                "seed_store_id": source.get("seed_store_id"),
+                "seed_cutoff": source.get("seed_cutoff"),
+                "legacy_source_label": source.get("legacy_source_label"),
+                "exists": os.path.exists(source["sqlite_db_path"]),
             }
         )
-    return jsonify({"accounts": accounts, "default_account_id": DEFAULT_ACCOUNT_ID})
+    try:
+        totals = catalog_counts()
+        error = ""
+    except (OSError, sqlite3.Error, ValueError) as exc:
+        totals = {}
+        error = str(exc)
+    return jsonify({"sources": sources, "totals": totals, "error": error})
 
 
 @app.route("/api/tasks/<task_id>")
@@ -1283,7 +1369,7 @@ def _runtime_account_config(task: dict, config: dict) -> tuple[dict, dict]:
 
 
 def _account_worker_log_path(account_id: str, task_id: str) -> str:
-    log_dir = Path(DASHBOARD_DIR) / "logs" / "accounts" / account_id
+    log_dir = LOG_ROOT / "dashboard" / "accounts" / account_id
     log_dir.mkdir(parents=True, exist_ok=True)
     return str(log_dir / f"{task_id}-worker.log")
 
@@ -1385,6 +1471,7 @@ def _launch_comment_task(task_id, retry_failed=False):
     if not task:
         return jsonify({"error": "task not found"}), 404
     worker = None
+    run_context = None
     try:
         task_config = json.loads(task.get("config_json") or "{}")
     except (TypeError, json.JSONDecodeError):
@@ -1488,6 +1575,16 @@ def _launch_comment_task(task_id, retry_failed=False):
         worker_env["MEDIACRAWLER_SQLITE_DB_PATH"] = account["sqlite_db_path"]
         worker_env["MEDIACRAWLER_USER_DATA_DIR"] = account["user_data_dir"]
         worker_env["MEDIACRAWLER_TASK_ID"] = task_id
+        run_context = begin_task_run(
+            task_id=task_id,
+            task_kind="comment",
+            account=account,
+            config=task_config,
+        )
+        worker_env["MEDIACRAWLER_RUN_ID"] = run_context["run_id"]
+        worker_env["MEDIACRAWLER_PROFILE_ID"] = run_context["profile_id"]
+        worker_env["MEDIACRAWLER_STORE_ID"] = run_context["store_id"]
+        worker_env["MEDIACRAWLER_ROUTE_ID"] = run_context["route_id"]
         worker_env["MEDIACRAWLER_LOG_PATH"] = _account_worker_log_path(
             account["account_id"], task_id
         )
@@ -1504,10 +1601,22 @@ def _launch_comment_task(task_id, retry_failed=False):
         if worker is not None:
             _terminate_task_group(worker.pid)
         fail_task_start(task_id, str(exc))
+        if run_context:
+            finish_task_run(
+                run_context["run_id"],
+                exit_code=1,
+                status="aborted",
+                stop_reason=f"worker launch failed: {exc}",
+            )
         if not dry_run:
             abort_launch(task_id, task_config.get("user_data_dir", ""), str(exc))
         return jsonify({"error": f"failed to start worker: {exc}"}), 500
-    return jsonify({"ok": True, "pid": worker.pid, "status": "starting"}), 202
+    return jsonify({
+        "ok": True,
+        "pid": worker.pid,
+        "run_id": run_context["run_id"],
+        "status": "starting",
+    }), 202
 
 
 @app.route("/api/tasks/<task_id>/start", methods=["POST"])
@@ -2142,6 +2251,8 @@ def api_active_crawl_task_summary():
     recent = tasks[0] if tasks else None
     risk_policies = {}
     for account in list_accounts(include_disabled=True):
+        if account.get("record_kind", "account") != "account":
+            continue
         status = get_risk_policy_status(account["user_data_dir"])
         status["account_id"] = account["account_id"]
         risk_policies[account["account_id"]] = status
@@ -2230,6 +2341,7 @@ def _launch_crawl_task(task_id):
     enable_cdp = bool(task_config.get("enable_cdp"))
     require_cdp = bool(task_config.get("require_cdp"))
     worker_env = os.environ.copy()
+    run_context = None
     worker_env["MEDIACRAWLER_ACCOUNT"] = account["account_id"]
     worker_env["MEDIACRAWLER_SQLITE_DB_PATH"] = account["sqlite_db_path"]
     worker_env["MEDIACRAWLER_USER_DATA_DIR"] = account["user_data_dir"]
@@ -2266,6 +2378,16 @@ def _launch_crawl_task(task_id):
     ]
     worker = None
     try:
+        run_context = begin_task_run(
+            task_id=task_id,
+            task_kind="search",
+            account=account,
+            config=task_config,
+        )
+        worker_env["MEDIACRAWLER_RUN_ID"] = run_context["run_id"]
+        worker_env["MEDIACRAWLER_PROFILE_ID"] = run_context["profile_id"]
+        worker_env["MEDIACRAWLER_STORE_ID"] = run_context["store_id"]
+        worker_env["MEDIACRAWLER_ROUTE_ID"] = run_context["route_id"]
         worker = subprocess.Popen(
             command,
             cwd=MEDIACRAWLER_ROOT,
@@ -2279,10 +2401,22 @@ def _launch_crawl_task(task_id):
         if worker is not None:
             _terminate_task_group(worker.pid)
         fail_crawl_task_start(task_id, str(exc))
+        if run_context:
+            finish_task_run(
+                run_context["run_id"],
+                exit_code=1,
+                status="aborted",
+                stop_reason=f"worker launch failed: {exc}",
+            )
         if not dry_run:
             abort_launch(task_id, task_config.get("user_data_dir", ""), str(exc))
         return jsonify({"error": f"failed to start crawl worker: {exc}"}), 500
-    return jsonify({"ok": True, "pid": worker.pid, "status": "starting"}), 202
+    return jsonify({
+        "ok": True,
+        "pid": worker.pid,
+        "run_id": run_context["run_id"],
+        "status": "starting",
+    }), 202
 
 
 @app.route("/api/crawl-tasks/<task_id>/start", methods=["POST"])

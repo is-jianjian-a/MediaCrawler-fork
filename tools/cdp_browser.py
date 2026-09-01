@@ -30,6 +30,7 @@ from playwright.async_api import Browser, BrowserContext, Playwright
 
 import config
 from tools.browser_launcher import BrowserLauncher
+from tools.browser_safety import BrowserPathError, validate_automation_browser_path
 from tools import utils
 from tools.crawler_util import get_random_viewport
 import logging
@@ -232,11 +233,15 @@ class CDPBrowserManager:
         Get browser path
         """
         # Prefer user-defined path
-        if config.CUSTOM_BROWSER_PATH and os.path.isfile(config.CUSTOM_BROWSER_PATH):
+        if config.CUSTOM_BROWSER_PATH:
+            try:
+                browser_path = validate_automation_browser_path(config.CUSTOM_BROWSER_PATH)
+            except BrowserPathError as exc:
+                raise RuntimeError(str(exc)) from exc
             utils.logger.info(
-                f"[CDPBrowserManager] Using custom browser path: {config.CUSTOM_BROWSER_PATH}"
+                f"[CDPBrowserManager] Using custom browser path: {browser_path}"
             )
-            return config.CUSTOM_BROWSER_PATH
+            return browser_path
 
         # Auto-detect browser path
         browser_paths = self.launcher.detect_browser_paths()
@@ -279,8 +284,7 @@ class CDPBrowserManager:
         user_data_dir = None
         if config.SAVE_LOGIN_STATE:
             user_data_dir = os.path.join(
-                os.getcwd(),
-                "browser_data",
+                str(config.BROWSER_DATA_ROOT),
                 f"cdp_{config.USER_DATA_DIR % config.PLATFORM}",
             )
             os.makedirs(user_data_dir, exist_ok=True)
@@ -360,8 +364,8 @@ class CDPBrowserManager:
         candidates.extend([
             Path.home() / "Library/Application Support/Google/Chrome/DevToolsActivePort",
             Path.home() / "Library/Application Support/Google/Chrome/Default/DevToolsActivePort",
-            Path(os.getcwd()) / "browser_data" / (config.USER_DATA_DIR % config.PLATFORM) / "DevToolsActivePort",
-            Path(os.getcwd()) / "browser_data" / f"cdp_{config.USER_DATA_DIR % config.PLATFORM}" / "DevToolsActivePort",
+            Path(config.BROWSER_DATA_ROOT) / (config.USER_DATA_DIR % config.PLATFORM) / "DevToolsActivePort",
+            Path(config.BROWSER_DATA_ROOT) / f"cdp_{config.USER_DATA_DIR % config.PLATFORM}" / "DevToolsActivePort",
         ])
         for candidate in candidates:
             try:
@@ -446,6 +450,7 @@ class CDPBrowserManager:
             browser_context = await self.browser.new_context(**context_options)
             utils.logger.info(f"[CDPBrowserManager] Created new browser context (viewport: {viewport['width']}x{viewport['height']})")
 
+        self.browser_context = browser_context
         await self.add_stealth_script()
 
         return browser_context

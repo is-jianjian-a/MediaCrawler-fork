@@ -36,7 +36,15 @@ import pytest
 from sqlalchemy import create_engine, select, inspect as sa_inspect
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
-from database.models import Base, XhsNote, XhsNoteComment
+from config.runtime_paths import LEGACY_CONTENT_DB
+
+from database.models import (
+    Base,
+    XhsCommentObservation,
+    XhsNote,
+    XhsNoteComment,
+    XhsNoteObservation,
+)
 from store.xhs._store_impl import XhsDbStoreImplement
 from config.db_config import get_current_account as cfg_get_current_account
 
@@ -175,14 +183,102 @@ async def test_store_update_content_preserves_crawler_account(temp_db, monkeypat
         await engine.dispose()
 
 
+@pytest.mark.asyncio
+async def test_run_observations_preserve_each_account_sighting(temp_db, monkeypatch):
+    session, engine, path = temp_db
+    try:
+        monkeypatch.setattr("config.db_config._DEFAULT_ACCOUNT", "02")
+        monkeypatch.setenv("MEDIACRAWLER_RUN_ID", "run-02-a")
+        monkeypatch.setenv("MEDIACRAWLER_TASK_ID", "crawl-a")
+        monkeypatch.setenv("MEDIACRAWLER_PROFILE_ID", "profile-02")
+        monkeypatch.setenv("MEDIACRAWLER_STORE_ID", "store-02")
+        monkeypatch.setenv("MEDIACRAWLER_ROUTE_ID", "route-02")
+        impl = XhsDbStoreImplement()
+        note_item = {
+            "note_id": "n-observed",
+            "source_keyword": "地铁走神",
+            "raw_data": '{"id":"n-observed"}',
+        }
+        comment_item = {
+            "comment_id": "c-observed",
+            "note_id": "n-observed",
+            "parent_comment_id": "",
+            "raw_data": '{"id":"c-observed"}',
+        }
+        await impl.record_note_observation(session, note_item)
+        await impl.record_note_observation(session, note_item)
+        await impl.record_note_observation(
+            session, {**note_item, "source_keyword": "地铁换乘"}
+        )
+        await impl.record_comment_observation(session, comment_item)
+        await session.commit()
+
+        note = (
+            await session.execute(
+                select(XhsNoteObservation).where(
+                    XhsNoteObservation.note_id == "n-observed",
+                    XhsNoteObservation.keyword == "地铁走神",
+                )
+            )
+        ).scalar_one()
+        comment = (
+            await session.execute(
+                select(XhsCommentObservation).where(
+                    XhsCommentObservation.comment_id == "c-observed"
+                )
+            )
+        ).scalar_one()
+        assert note.run_id == "run-02-a"
+        assert note.account_id == "02"
+        assert note.profile_id == "profile-02"
+        assert note.store_id == "store-02"
+        assert note.route_id == "route-02"
+        assert note.seen_count == 2
+        all_note_observations = (
+            await session.execute(
+                select(XhsNoteObservation).where(
+                    XhsNoteObservation.note_id == "n-observed"
+                )
+            )
+        ).scalars().all()
+        assert {row.keyword for row in all_note_observations} == {
+            "地铁走神",
+            "地铁换乘",
+        }
+        assert comment.run_id == "run-02-a"
+        assert comment.note_id == "n-observed"
+    finally:
+        await session.close()
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_legacy_untracked_write_does_not_create_fake_observation(
+    temp_db, monkeypatch
+):
+    session, engine, path = temp_db
+    try:
+        monkeypatch.delenv("MEDIACRAWLER_RUN_ID", raising=False)
+        impl = XhsDbStoreImplement()
+        await impl.record_note_observation(session, {"note_id": "n-legacy"})
+        await session.commit()
+        count = (
+            await session.execute(select(XhsNoteObservation))
+        ).scalars().all()
+        assert count == []
+    finally:
+        await session.close()
+        await engine.dispose()
+
+
 # ---------------------------------------------------------------------------
 # 4. 生产库一致性（只读，缺失则跳过）
 # ---------------------------------------------------------------------------
 
-REAL_DB = os.path.join("database", "sqlite_tables.db")
+REAL_DB = str(LEGACY_CONTENT_DB)
 
 
-@pytest.mark.skipif(not os.path.exists(REAL_DB), reason="生产库 database/sqlite_tables.db 不存在")
+@pytest.mark.skipif(not os.path.exists(REAL_DB), reason="生产内容库不存在")
 class TestRealDatabaseConsistency:
     def test_crawler_account_column_present_and_populated(self):
         import sqlite3

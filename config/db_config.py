@@ -21,6 +21,8 @@
 import os
 import re
 
+from .runtime_paths import LEGACY_CONTENT_DB
+
 # mysql config
 MYSQL_DB_PWD = os.getenv("MYSQL_DB_PWD", "123456")
 MYSQL_DB_USER = os.getenv("MYSQL_DB_USER", "root")
@@ -65,9 +67,7 @@ def is_valid_account_id(account_id: str) -> bool:
 
 # Dashboard 多账号任务通过环境变量把每个账号路由到独立 SQLite 文件。
 # 未设置时继续使用历史主库，保持 CLI 和已有数据兼容。
-_DEFAULT_SQLITE_DB_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(__file__)), "database", "sqlite_tables.db"
-)
+_DEFAULT_SQLITE_DB_PATH = str(LEGACY_CONTENT_DB)
 SQLITE_DB_PATH = os.path.abspath(
     os.path.expanduser(os.getenv("MEDIACRAWLER_SQLITE_DB_PATH", _DEFAULT_SQLITE_DB_PATH))
 )

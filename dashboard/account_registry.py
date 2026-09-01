@@ -18,25 +18,42 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 
+from config.runtime_paths import (
+    BROWSER_DATA_ROOT,
+    CONTENT_ARCHIVE_ROOT,
+    CONTENT_DB_ROOT,
+    LEGACY_CONTENT_DB,
+    TASK_DB,
+)
+from tools.browser_safety import BrowserPathError, validate_automation_browser_path
+
 
 MEDIACRAWLER_ROOT = Path(__file__).resolve().parents[1]
-DASHBOARD_DIR = MEDIACRAWLER_ROOT / "dashboard"
-TASK_DB = DASHBOARD_DIR / "database" / "task_manager.db"
-BROWSER_DATA_ROOT = MEDIACRAWLER_ROOT / "browser_data"
-ACCOUNT_DATA_ROOT = MEDIACRAWLER_ROOT / "database" / "accounts"
-LEGACY_CONTENT_DB = MEDIACRAWLER_ROOT / "database" / "sqlite_tables.db"
+ACCOUNT_DATA_ROOT = CONTENT_DB_ROOT
 
 DEFAULT_ACCOUNT_ID = os.getenv("MEDIACRAWLER_DEFAULT_XHS_ACCOUNT", "02")
 DEFAULT_USER_DATA_DIR = f"%s_user_data_dir_account{DEFAULT_ACCOUNT_ID}"
-SYSTEM_CHROME_PATH = Path(
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-)
 ACCOUNT_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$")
 _INITIALIZED_DATABASES: set[str] = set()
 
 
 class AccountRegistryError(ValueError):
     """Raised when account routing would weaken isolation."""
+
+
+def _sync_normalized_metadata() -> None:
+    """Keep the compatibility route projected into the normalized model."""
+    try:
+        from dashboard.xhs_data_model import init_xhs_data_model_db
+    except ModuleNotFoundError:  # Support direct script execution.
+        from xhs_data_model import init_xhs_data_model_db  # type: ignore[no-redef]
+
+    init_xhs_data_model_db(
+        TASK_DB,
+        legacy_content_db=LEGACY_CONTENT_DB,
+        archive_root=CONTENT_ARCHIVE_ROOT,
+        browser_data_root=BROWSER_DATA_ROOT,
+    )
 
 
 def _connect() -> sqlite3.Connection:
@@ -84,20 +101,12 @@ def resolve_profile_path(user_data_dir: str) -> Path:
 
 
 def validate_browser_path(browser_path: str, *, require_exists: bool = True) -> str:
-    raw = str(browser_path or "").strip()
-    if not raw:
-        raise AccountRegistryError("browser_path is required")
-    candidate = Path(raw).expanduser()
     try:
-        resolved = candidate.resolve(strict=require_exists)
-    except (OSError, RuntimeError) as exc:
-        raise AccountRegistryError(f"isolated browser_path does not exist: {candidate}") from exc
-    system_chrome = SYSTEM_CHROME_PATH.resolve(strict=False)
-    if resolved == system_chrome or str(system_chrome.parent.parent) in str(resolved):
-        raise AccountRegistryError("system Google Chrome is forbidden for automated tasks")
-    if require_exists and (not resolved.is_file() or not os.access(resolved, os.X_OK)):
-        raise AccountRegistryError(f"isolated browser_path is not executable: {resolved}")
-    return str(resolved)
+        return validate_automation_browser_path(
+            browser_path, require_exists=require_exists, required=True
+        )
+    except BrowserPathError as exc:
+        raise AccountRegistryError(str(exc)) from exc
 
 
 def _validate_content_db_path(
@@ -303,8 +312,22 @@ def init_account_registry_db() -> None:
         )
         """
     )
+    duplicate_ids = conn.execute(
+        "SELECT lower(account_id) AS normalized, group_concat(account_id) AS ids "
+        "FROM xhs_accounts GROUP BY lower(account_id) HAVING COUNT(*) > 1"
+    ).fetchone()
+    if duplicate_ids:
+        conn.close()
+        raise AccountRegistryError(
+            f"case-insensitive account_id collision: {duplicate_ids['ids']}"
+        )
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_xhs_accounts_account_id_nocase "
+        "ON xhs_accounts(account_id COLLATE NOCASE)"
+    )
     validate_account_id(DEFAULT_ACCOUNT_ID)
-    default_browser = _historical_browser_path(conn, DEFAULT_USER_DATA_DIR)
+    default_profile_template = default_user_data_dir(DEFAULT_ACCOUNT_ID)
+    default_browser = _historical_browser_path(conn, default_profile_template)
     try:
         default_browser = validate_browser_path(default_browser)
     except AccountRegistryError:
@@ -313,11 +336,11 @@ def init_account_registry_db() -> None:
         conn,
         account_id=DEFAULT_ACCOUNT_ID,
         display_name=f"小红书账号 {DEFAULT_ACCOUNT_ID}",
-        user_data_dir=DEFAULT_USER_DATA_DIR,
+        user_data_dir=default_profile_template,
         browser_path=default_browser,
         sqlite_db_path=str(LEGACY_CONTENT_DB.resolve(strict=False)),
         storage_mode="legacy_shared",
-        enabled=bool(default_browser),
+        enabled=False,
     )
     default_row = conn.execute(
         "SELECT user_data_dir, sqlite_db_path, storage_mode "
@@ -334,7 +357,8 @@ def init_account_registry_db() -> None:
         else Path(default_content_db_path(DEFAULT_ACCOUNT_ID))
     )
     if (
-        str(default_row["user_data_dir"]).casefold() != DEFAULT_USER_DATA_DIR.casefold()
+        str(default_row["user_data_dir"]).casefold()
+        != default_profile_template.casefold()
         or Path(default_row["sqlite_db_path"]).resolve(strict=False)
         != expected_db.resolve(strict=False)
     ):
@@ -342,6 +366,7 @@ def init_account_registry_db() -> None:
     _backfill_task_accounts(conn)
     conn.commit()
     conn.close()
+    _sync_normalized_metadata()
     _INITIALIZED_DATABASES.add(database_key)
 
 
@@ -369,7 +394,7 @@ def get_account(
     normalized = validate_account_id(account_id or DEFAULT_ACCOUNT_ID)
     conn = _connect()
     row = conn.execute(
-        "SELECT * FROM xhs_accounts WHERE account_id=?", (normalized,)
+        "SELECT * FROM xhs_accounts WHERE account_id=? COLLATE NOCASE", (normalized,)
     ).fetchone()
     conn.close()
     if not row:
@@ -389,9 +414,9 @@ def validate_account_runtime(account: Dict[str, Any]) -> Dict[str, Any]:
     db_path = _validate_content_db_path(
         account.get("sqlite_db_path", ""), storage_mode=storage_mode
     )
-    if storage_mode == "legacy_shared" and account_id != DEFAULT_ACCOUNT_ID:
+    if storage_mode == "legacy_shared":
         raise AccountRegistryError(
-            "only the default compatibility account may use legacy shared storage"
+            "legacy shared storage is read-only; migrate the account to dedicated storage"
         )
 
     conn = _connect()
@@ -501,6 +526,7 @@ def create_account(
         raise
     finally:
         conn.close()
+    _sync_normalized_metadata()
     return get_account(account_id)  # type: ignore[return-value]
 
 
@@ -515,6 +541,7 @@ def update_account(
     account = get_account(account_id)
     if not account:
         raise AccountRegistryError(f"account not found: {account_id}")
+    account_id = str(account["account_id"])
     updates: dict[str, Any] = {}
     if display_name is not None:
         normalized_name = str(display_name).strip()
@@ -524,7 +551,7 @@ def update_account(
     if browser_path is not None:
         updates["browser_path"] = validate_browser_path(browser_path)
     if enabled is not None:
-        if enabled and account["storage_mode"] != "dedicated" and account_id != DEFAULT_ACCOUNT_ID:
+        if enabled and account["storage_mode"] != "dedicated":
             raise AccountRegistryError(
                 "historical shared-db accounts must be migrated to dedicated storage before enabling"
             )
@@ -540,6 +567,7 @@ def update_account(
     )
     conn.commit()
     conn.close()
+    _sync_normalized_metadata()
     return get_account(account_id)  # type: ignore[return-value]
 
 
@@ -610,6 +638,12 @@ def migrate_default_account_to_dedicated() -> Dict[str, Any]:
         raise
     finally:
         conn.close()
+    _sync_normalized_metadata()
+    try:
+        from dashboard.xhs_data_model import mark_account_store_legacy_seeded
+    except ModuleNotFoundError:  # Support direct script execution.
+        from xhs_data_model import mark_account_store_legacy_seeded  # type: ignore[no-redef]
+    mark_account_store_legacy_seeded(DEFAULT_ACCOUNT_ID, task_db=TASK_DB)
     return get_account(DEFAULT_ACCOUNT_ID)  # type: ignore[return-value]
 
 
@@ -627,9 +661,20 @@ def bind_task_config(
         raise AccountRegistryError(f"account not found: {selected}")
     if require_enabled:
         account = validate_account_runtime(account)
+    try:
+        from dashboard.xhs_data_model import route_metadata
+    except ModuleNotFoundError:  # Support direct script execution.
+        from xhs_data_model import route_metadata  # type: ignore[no-redef]
+    metadata = route_metadata(
+        account["account_id"], task_db=TASK_DB, require_writable=require_enabled
+    )
+    account.update(metadata)
     normalized_config.update(
         {
             "account_id": account["account_id"],
+            "profile_id": account["profile_id"],
+            "store_id": account["store_id"],
+            "route_id": account["route_id"],
             "user_data_dir": account["user_data_dir"],
             "browser_path": account["browser_path"],
             "sqlite_db_path": account["sqlite_db_path"],
@@ -652,6 +697,11 @@ def _public_account(account: Dict[str, Any]) -> Dict[str, Any]:
         "display_name": account["display_name"],
         "enabled": account["enabled"],
         "storage_mode": account["storage_mode"],
+        "record_kind": account.get("record_kind", "account"),
+        "identity_status": account.get("identity_status", "unverified"),
+        "profile_id": account.get("active_profile_id", ""),
+        "store_id": account.get("active_store_id", ""),
+        "route_id": account.get("active_route_id", ""),
         "profile_exists": account["profile_exists"],
         "content_db_exists": account["content_db_exists"],
     }

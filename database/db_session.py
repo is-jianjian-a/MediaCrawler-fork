@@ -52,27 +52,31 @@ async def create_database_if_not_exists(db_type: str):
         await engine.dispose()
 
 
+def _database_url(db_type: str) -> str:
+    if db_type in ["json", "jsonl", "csv"]:
+        return ""
+    if db_type == "sqlite":
+        return f"sqlite+aiosqlite:///{sqlite_db_config['db_path']}?check_same_thread=false&timeout=30"
+    elif db_type == "mysql" or db_type == "db":
+        return f"mysql+asyncmy://{mysql_db_config['user']}:{mysql_db_config['password']}@{mysql_db_config['host']}:{mysql_db_config['port']}/{mysql_db_config['db_name']}"
+    elif db_type == "postgres":
+        return f"postgresql+asyncpg://{postgres_db_config['user']}:{postgres_db_config['password']}@{postgres_db_config['host']}:{postgres_db_config['port']}/{postgres_db_config['db_name']}"
+    raise ValueError(f"Unsupported database type: {db_type}")
+
+
 def get_async_engine(db_type: str = None):
     if db_type is None:
         db_type = config.SAVE_DATA_OPTION
 
-    if db_type in _engines:
-        return _engines[db_type]
-
-    if db_type in ["json", "jsonl", "csv"]:
+    db_url = _database_url(db_type)
+    if not db_url:
         return None
-
-    if db_type == "sqlite":
-        db_url = f"sqlite+aiosqlite:///{sqlite_db_config['db_path']}?check_same_thread=false&timeout=30"
-    elif db_type == "mysql" or db_type == "db":
-        db_url = f"mysql+asyncmy://{mysql_db_config['user']}:{mysql_db_config['password']}@{mysql_db_config['host']}:{mysql_db_config['port']}/{mysql_db_config['db_name']}"
-    elif db_type == "postgres":
-        db_url = f"postgresql+asyncpg://{postgres_db_config['user']}:{postgres_db_config['password']}@{postgres_db_config['host']}:{postgres_db_config['port']}/{postgres_db_config['db_name']}"
-    else:
-        raise ValueError(f"Unsupported database type: {db_type}")
+    cache_key = (db_type, db_url)
+    if cache_key in _engines:
+        return _engines[cache_key]
 
     engine = create_async_engine(db_url, echo=False)
-    _engines[db_type] = engine
+    _engines[cache_key] = engine
     return engine
 
 
@@ -80,15 +84,15 @@ def _get_session_factory(db_type: str = None) -> sessionmaker:
     if db_type is None:
         db_type = config.SAVE_DATA_OPTION
 
-    if db_type in _session_factories:
-        return _session_factories[db_type]
-
     engine = get_async_engine(db_type)
     if not engine:
         return None
+    cache_key = (db_type, _database_url(db_type))
+    if cache_key in _session_factories:
+        return _session_factories[cache_key]
 
     factory = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-    _session_factories[db_type] = factory
+    _session_factories[cache_key] = factory
     return factory
 
 

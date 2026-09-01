@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest import mock
 
 from dashboard import comment_fetcher
+from tools.browser_safety import SYSTEM_GOOGLE_CHROME
 from dashboard import server as dashboard_server
 from dashboard.comment_fetcher import CommentTaskExecutor
 from tools.app_runner import RISK_CONTROL_EXIT_CODE
@@ -105,7 +106,7 @@ class CommentFetcherTests(unittest.TestCase):
                     "MEDIACRAWLER_ENABLE_CDP": "true",
                     "MEDIACRAWLER_REQUIRE_CDP": "true",
                     "MEDIACRAWLER_CDP_ENDPOINT": "http://127.0.0.1:9222",
-                    "MEDIACRAWLER_BROWSER_PATH": str(comment_fetcher.SYSTEM_CHROME_PATH),
+                    "MEDIACRAWLER_BROWSER_PATH": str(SYSTEM_GOOGLE_CHROME),
                     "MEDIACRAWLER_XHS_NOTE_PUBLISH_DATE_AFTER": "2026-06-10",
                 },
                 clear=True,
@@ -135,7 +136,7 @@ class CommentFetcherTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             with mock.patch.dict(
                 os.environ,
-                {"MEDIACRAWLER_BROWSER_PATH": str(comment_fetcher.SYSTEM_CHROME_PATH)},
+                {"MEDIACRAWLER_BROWSER_PATH": str(SYSTEM_GOOGLE_CHROME)},
                 clear=True,
             ):
                 executor = CommentTaskExecutor(
@@ -241,6 +242,16 @@ class CommentFetcherTests(unittest.TestCase):
                     "reserve_launch",
                     return_value=LaunchDecision(True, "normal"),
                 ),
+                mock.patch.object(
+                    dashboard_server,
+                    "begin_task_run",
+                    return_value={
+                        "run_id": "run-browser",
+                        "profile_id": "profile-test",
+                        "store_id": "store-test",
+                        "route_id": "route-test",
+                    },
+                ),
                 mock.patch.object(dashboard_server.subprocess, "Popen", return_value=fake_worker) as popen,
             ):
                 response, status = dashboard_server._launch_comment_task("task-browser")
@@ -255,6 +266,10 @@ class CommentFetcherTests(unittest.TestCase):
                 comment_fetcher.DEFAULT_COMMENT_PUBLISH_DATE_AFTER,
             )
             self.assertEqual(env["MEDIACRAWLER_BROWSER_PATH"], resolved_browser_path)
+            self.assertEqual(env["MEDIACRAWLER_RUN_ID"], "run-browser")
+            self.assertEqual(env["MEDIACRAWLER_PROFILE_ID"], "profile-test")
+            self.assertEqual(env["MEDIACRAWLER_STORE_ID"], "store-test")
+            self.assertEqual(env["MEDIACRAWLER_ROUTE_ID"], "route-test")
             self.assertEqual(
                 env["MEDIACRAWLER_XHS_NOTE_PUBLISH_DATE_AFTER"],
                 comment_fetcher.DEFAULT_COMMENT_PUBLISH_DATE_AFTER,
@@ -418,6 +433,24 @@ class CommentFetcherTests(unittest.TestCase):
                     },
                 ),
                 mock.patch.object(comment_fetcher, "get_task_posts", return_value=posts),
+                mock.patch.object(
+                    comment_fetcher,
+                    "bind_task_config",
+                    return_value=(
+                        {
+                            "account_id": "02",
+                            "browser_path": browser_path,
+                            "sqlite_db_path": str(Path(temp_dir) / "content.db"),
+                            "user_data_dir": "%s_user_data_dir_account02",
+                        },
+                        {
+                            "account_id": "02",
+                            "browser_path": browser_path,
+                            "sqlite_db_path": str(Path(temp_dir) / "content.db"),
+                            "user_data_dir": "%s_user_data_dir_account02",
+                        },
+                    ),
+                ),
                 mock.patch.object(comment_fetcher, "start_task"),
                 mock.patch.object(
                     comment_fetcher,

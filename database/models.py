@@ -326,6 +326,35 @@ class XhsNoteKeywordHit(Base):
     last_seen_ts = Column(BigInteger, comment='最近命中时间戳')
     hit_count = Column(Integer, default=1, comment='命中次数')
 
+
+class XhsNoteObservation(Base):
+    """One account/run observing one note, independent of canonical ownership."""
+
+    __tablename__ = 'xhs_note_observation'
+    __table_args__ = (
+        UniqueConstraint(
+            'run_id', 'note_id', 'keyword', 'observation_kind',
+            name='uq_xhs_note_observation_run_note_keyword_kind'
+        ),
+    )
+    id = Column(Integer, primary_key=True, comment='主键ID')
+    run_id = Column(String(255), nullable=False, index=True, comment='运行ID')
+    task_id = Column(String(255), nullable=False, default='', index=True, comment='任务ID')
+    account_id = Column(String(64), nullable=False, index=True, comment='真实运行账号')
+    profile_id = Column(String(64), nullable=False, default='', comment='浏览器Profile ID')
+    store_id = Column(String(64), nullable=False, default='', index=True, comment='写入Store ID')
+    route_id = Column(String(64), nullable=False, default='', index=True, comment='执行路由ID')
+    note_id = Column(String(255), nullable=False, index=True, comment='笔记ID')
+    keyword = Column(String(255), nullable=False, default='', index=True, comment='本次观测关键词')
+    observation_kind = Column(String(32), nullable=False, default='detail', comment='观测类型')
+    search_page = Column(Integer, default=0, comment='搜索页码')
+    rank_in_page = Column(Integer, default=0, comment='页内排序')
+    observed_at = Column(BigInteger, nullable=False, comment='首次观测时间戳')
+    last_seen_ts = Column(BigInteger, nullable=False, comment='最近观测时间戳')
+    seen_count = Column(Integer, nullable=False, default=1, comment='本次运行观测次数')
+    payload_hash = Column(String(64), default='', comment='载荷摘要')
+    legacy_source_label = Column(String(64), default='', comment='兼容旧crawler_account标签')
+
 class XhsNoteComment(Base):
     __tablename__ = 'xhs_note_comment'
     id = Column(Integer, primary_key=True, comment='主键ID')
@@ -345,6 +374,34 @@ class XhsNoteComment(Base):
     like_count = Column(BigInteger, default=0, comment='点赞数')
     raw_data = Column(Text, comment='API原始响应JSON')
     crawler_account = Column(String(64), default='default', index=True, comment='抓取账号')
+
+
+class XhsCommentObservation(Base):
+    """One account/run observing one comment, independent of first writer."""
+
+    __tablename__ = 'xhs_comment_observation'
+    __table_args__ = (
+        UniqueConstraint(
+            'run_id', 'comment_id', 'observation_kind',
+            name='uq_xhs_comment_observation_run_comment_kind'
+        ),
+    )
+    id = Column(Integer, primary_key=True, comment='主键ID')
+    run_id = Column(String(255), nullable=False, index=True, comment='运行ID')
+    task_id = Column(String(255), nullable=False, default='', index=True, comment='任务ID')
+    account_id = Column(String(64), nullable=False, index=True, comment='真实运行账号')
+    profile_id = Column(String(64), nullable=False, default='', comment='浏览器Profile ID')
+    store_id = Column(String(64), nullable=False, default='', index=True, comment='写入Store ID')
+    route_id = Column(String(64), nullable=False, default='', index=True, comment='执行路由ID')
+    note_id = Column(String(255), nullable=False, index=True, comment='笔记ID')
+    comment_id = Column(String(255), nullable=False, index=True, comment='评论ID')
+    parent_comment_id = Column(String(255), default='', comment='父评论ID')
+    observation_kind = Column(String(32), nullable=False, default='comment_page', comment='观测类型')
+    observed_at = Column(BigInteger, nullable=False, comment='首次观测时间戳')
+    last_seen_ts = Column(BigInteger, nullable=False, comment='最近观测时间戳')
+    seen_count = Column(Integer, nullable=False, default=1, comment='本次运行观测次数')
+    payload_hash = Column(String(64), default='', comment='载荷摘要')
+    legacy_source_label = Column(String(64), default='', comment='兼容旧crawler_account标签')
 
 class TiebaNote(Base):
     __tablename__ = 'tieba_note'

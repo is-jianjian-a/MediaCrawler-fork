@@ -22,6 +22,8 @@ import argparse
 import logging
 import os
 
+from config.runtime_paths import LOG_ROOT
+
 from .crawler_util import *
 from .slider_util import *
 from .time_util import *
@@ -29,9 +31,7 @@ from .time_util import *
 
 def init_logging_config():
     level = logging.INFO
-    default_log_path = os.path.join(
-        os.path.dirname(os.path.dirname(__file__)), "logs", "crawler.log"
-    )
+    default_log_path = str(LOG_ROOT / "crawler.log")
     log_path = os.path.abspath(
         os.path.expanduser(os.getenv("MEDIACRAWLER_LOG_PATH", default_log_path))
     )

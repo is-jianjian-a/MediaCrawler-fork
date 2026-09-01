@@ -165,6 +165,9 @@ cython_debug/
 /temp_image/
 /browser_data/
 /data/
+/logs/
+/dashboard/logs/
+/dashboard/locks/
 
 */.DS_Store
 .vscode
@@ -179,9 +182,8 @@ agent_zone
 debug_tools
 
 # Database files (large, user-specific)
-database/*.db
-database/*.db.backup*
-database/accounts/*.db
+/database/*.db*
+/database/accounts/
 
 # Generated reports/HTML (reproducible outputs)
 *.html
@@ -205,11 +207,9 @@ explore/.env
 .workbuddy/
 
 # Dashboard runtime state
-dashboard/database/*.db
-dashboard/database/*.db-shm
-dashboard/database/*.db-wal
-database/**/*.db-shm
-database/**/*.db-wal
+/dashboard/database/
+/database/**/*.db-shm
+/database/**/*.db-wal
 
 # Local crawl selections may contain temporary xsec_token values
 dashboard/top100_video_function_posts.json

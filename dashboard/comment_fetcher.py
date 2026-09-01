@@ -24,7 +24,9 @@ DASHBOARD_DIR = MEDIACRAWLER_ROOT / "dashboard"
 sys.path.insert(0, str(MEDIACRAWLER_ROOT))
 sys.path.insert(0, str(DASHBOARD_DIR))
 
+from config.runtime_paths import BROWSER_DATA_ROOT, LEGACY_CONTENT_DB, LOG_ROOT
 from tools.app_runner import RISK_CONTROL_EXIT_CODE
+from tools.browser_safety import BrowserPathError, validate_automation_browser_path
 try:
     from dashboard.risk_policy import (
         assert_launch_reserved,
@@ -55,6 +57,13 @@ try:
     from dashboard.profile_lock import acquire_profile_lock
 except ModuleNotFoundError:
     from profile_lock import acquire_profile_lock  # type: ignore[no-redef]
+try:
+    from dashboard.xhs_data_model import finish_task_run, mark_task_run_running
+except ModuleNotFoundError:
+    from xhs_data_model import (  # type: ignore[no-redef]
+        finish_task_run,
+        mark_task_run_running,
+    )
 
 from task_manager import (  # noqa: E402
     finish_task,
@@ -81,31 +90,15 @@ import logging
 import re
 logger = logging.getLogger("MediaCrawler")
 
-SYSTEM_CHROME_PATH = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
 DEFAULT_COMMENT_PUBLISH_DATE_AFTER = "2000-01-01"
 
 
 def validate_standard_browser_path(browser_path: str) -> str:
     """Require an explicit executable that is not the user's system Chrome."""
-    raw_path = str(browser_path or "").strip()
-    if not raw_path:
-        raise ValueError(
-            "standard browser mode requires an explicit isolated browser_path"
-        )
-    candidate = Path(raw_path).expanduser()
     try:
-        resolved = candidate.resolve(strict=True)
-    except (OSError, RuntimeError) as exc:
-        raise ValueError(f"isolated browser_path does not exist: {candidate}") from exc
-    try:
-        system_chrome = SYSTEM_CHROME_PATH.resolve(strict=False)
-    except (OSError, RuntimeError):
-        system_chrome = SYSTEM_CHROME_PATH
-    if resolved == system_chrome:
-        raise ValueError("system Google Chrome is not allowed for automated comment tasks")
-    if not resolved.is_file() or not os.access(resolved, os.X_OK):
-        raise ValueError(f"isolated browser_path is not executable: {resolved}")
-    return str(resolved)
+        return validate_automation_browser_path(browser_path)
+    except BrowserPathError as exc:
+        raise ValueError(str(exc)) from exc
 
 
 def validate_comment_publish_date_after(value: str) -> str:
@@ -131,8 +124,8 @@ def cdp_websocket_from_active_port(port: int) -> str:
     candidates = [
         Path.home() / "Library/Application Support/Google/Chrome/DevToolsActivePort",
         Path.home() / "Library/Application Support/Google/Chrome/Default/DevToolsActivePort",
-        MEDIACRAWLER_ROOT / "browser_data" / "chrome-cdp-debug" / "DevToolsActivePort",
-        MEDIACRAWLER_ROOT / "browser_data" / f"chrome-cdp-debug-{port}" / "DevToolsActivePort",
+        BROWSER_DATA_ROOT / "chrome-cdp-debug" / "DevToolsActivePort",
+        BROWSER_DATA_ROOT / f"chrome-cdp-debug-{port}" / "DevToolsActivePort",
     ]
     for candidate in candidates:
         try:
@@ -426,8 +419,8 @@ class CommentTaskExecutor:
         env["MEDIACRAWLER_USER_DATA_DIR"] = self.user_data_dir
         env["MEDIACRAWLER_TASK_ID"] = task_id
         env["MEDIACRAWLER_LOG_PATH"] = str(
-            DASHBOARD_DIR
-            / "logs"
+            LOG_ROOT
+            / "dashboard"
             / "accounts"
             / self.account_id
             / f"{task_id or 'comment'}-runtime.log"
@@ -446,7 +439,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run a comment supplement task")
     parser.add_argument("--task-id", required=True)
     parser.add_argument("--account-id")
-    parser.add_argument("--db-path", default="database/sqlite_tables.db")
+    parser.add_argument("--db-path", default=str(LEGACY_CONTENT_DB))
     parser.add_argument("--batch-size", type=int)
     parser.add_argument("--max-comments", type=int)
     parser.add_argument("--max-sub-comments", type=int)
@@ -469,6 +462,7 @@ def main() -> int:
         help="Also expand second-level comments; disabled by default to bound task size",
     )
     args = parser.parse_args()
+    run_id = str(os.getenv("MEDIACRAWLER_RUN_ID", "") or "").strip()
 
     task = get_task(args.task_id)
     if not task:
@@ -541,6 +535,8 @@ def main() -> int:
         posts = posts[:args.limit]
     if not posts:
         logger.info('No pending posts to process')
+        finish_task(args.task_id, 0)
+        finish_task_run(run_id, exit_code=0, status="completed")
         return 0
 
     db_path = args.db_path
@@ -567,6 +563,7 @@ def main() -> int:
             executor.close()
             parser.error(str(exc))
         start_task(args.task_id, str(log_path))
+        mark_task_run_running(run_id, worker_pid=os.getpid())
     all_ok = True
     interrupted = False
     risk_control_stopped = False
@@ -590,6 +587,13 @@ def main() -> int:
             if not args.dry_run:
                 confirm_launch(args.task_id, account["user_data_dir"])
             with log_path.open("a", encoding="utf-8") as log_file:
+                print(
+                    f"[run] run_id={run_id or '<legacy-untracked>'} "
+                    f"profile_id={os.getenv('MEDIACRAWLER_PROFILE_ID', '')} "
+                    f"store_id={os.getenv('MEDIACRAWLER_STORE_ID', '')}",
+                    file=log_file,
+                    flush=True,
+                )
                 print(f"[task-run] posts={len(posts)} browser_launches=1", file=log_file, flush=True)
                 all_ok = executor.run_batch(args.task_id, posts, log_file)
                 if executor.last_exit_code == RISK_CONTROL_EXIT_CODE:
@@ -627,6 +631,23 @@ def main() -> int:
 
     final_exit_code = 130 if interrupted else (RISK_CONTROL_EXIT_CODE if risk_control_stopped else (0 if all_ok else 1))
     finish_task(args.task_id, final_exit_code)
+    final_task = get_task(args.task_id) or {}
+    task_status = final_task.get("status")
+    run_status = {
+        "completed": "completed",
+        "completed_with_errors": "completed_with_errors",
+        "cancelled": "cancelled",
+    }.get(task_status, "failed" if final_exit_code else "completed")
+    finish_task_run(
+        run_id,
+        exit_code=final_exit_code,
+        status=run_status,
+        stop_reason=fatal_error or (
+            "XHS risk control CAPTCHA (HTTP 461/471)"
+            if risk_control_stopped
+            else ("task interrupted" if interrupted else "")
+        ),
+    )
     if not args.dry_run:
         record_completion(
             task_id=args.task_id,

@@ -18,9 +18,11 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
+from config.runtime_paths import TASK_DB
+
 
 MEDIACRAWLER_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-RISK_DB = os.path.join(MEDIACRAWLER_ROOT, "dashboard", "database", "task_manager.db")
+RISK_DB = str(TASK_DB)
 
 COOLDOWN_SECONDS = int(os.getenv("MEDIACRAWLER_RISK_COOLDOWN_SECONDS", str(4 * 3600)))
 TASK_GAP_SECONDS = int(os.getenv("MEDIACRAWLER_RISK_TASK_GAP_SECONDS", str(60 * 60)))

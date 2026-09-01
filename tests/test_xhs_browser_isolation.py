@@ -53,6 +53,7 @@ async def test_xhs_rejects_explicit_system_chrome(monkeypatch):
 async def test_xhs_profile_exits_when_last_window_is_closed(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "CUSTOM_BROWSER_PATH", "")
     monkeypatch.setattr(config, "SAVE_LOGIN_STATE", True)
+    monkeypatch.setattr(config, "PLATFORM", "xhs")
     monkeypatch.setattr(config, "USER_DATA_DIR", "%s_user_data_dir_test")
     monkeypatch.chdir(tmp_path)
     chromium = FakeChromium()
@@ -62,6 +63,6 @@ async def test_xhs_profile_exits_when_last_window_is_closed(monkeypatch, tmp_pat
     )
 
     assert chromium.launch_kwargs["args"] == ["--disable-background-mode"]
-    assert chromium.launch_kwargs["user_data_dir"].endswith(
-        "browser_data/xhs_user_data_dir_test"
+    assert chromium.launch_kwargs["user_data_dir"] == str(
+        config.BROWSER_DATA_ROOT / "xhs_user_data_dir_test"
     )

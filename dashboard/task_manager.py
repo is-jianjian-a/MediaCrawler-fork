@@ -29,11 +29,12 @@ from typing import Dict, List, Optional
 import logging
 logger = logging.getLogger("MediaCrawler")
 
+from config.runtime_paths import LEGACY_CONTENT_DB, TASK_DB as RUNTIME_TASK_DB
+
 # --- config ---
 MEDIACRAWLER_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DASHBOARD_DIR = os.path.join(MEDIACRAWLER_ROOT, "dashboard")
-TASK_DB = os.path.join(DASHBOARD_DIR, "database", "task_manager.db")
-CRAWLER_DB = os.path.join(MEDIACRAWLER_ROOT, "database", "sqlite_tables.db")
+TASK_DB = str(RUNTIME_TASK_DB)
+CRAWLER_DB = str(LEGACY_CONTENT_DB)
 
 sys.path.insert(0, MEDIACRAWLER_ROOT)
 
@@ -75,7 +76,8 @@ def init_task_db():
             exit_code INTEGER,
             stop_requested_at REAL,
             stop_source TEXT,
-            stop_reason TEXT
+            stop_reason TEXT,
+            current_run_id TEXT
         )
     """)
     existing_cols = {
@@ -94,6 +96,7 @@ def init_task_db():
         "stop_requested_at": "ALTER TABLE tasks ADD COLUMN stop_requested_at REAL",
         "stop_source": "ALTER TABLE tasks ADD COLUMN stop_source TEXT",
         "stop_reason": "ALTER TABLE tasks ADD COLUMN stop_reason TEXT",
+        "current_run_id": "ALTER TABLE tasks ADD COLUMN current_run_id TEXT",
     }.items():
         if col not in existing_cols:
             conn.execute(ddl)

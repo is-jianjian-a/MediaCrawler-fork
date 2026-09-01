@@ -29,6 +29,7 @@ import asyncio
 from pathlib import Path
 
 from tools import utils
+from tools.browser_safety import BrowserPathError, validate_automation_browser_path
 import logging
 logger = logging.getLogger("MediaCrawler")
 
@@ -70,7 +71,6 @@ class BrowserLauncher:
             # Common Chrome/Edge installation paths on macOS
             possible_paths = [
                 # Chrome paths
-                "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
                 "/Applications/Google Chrome Beta.app/Contents/MacOS/Google Chrome Beta",
                 "/Applications/Google Chrome Dev.app/Contents/MacOS/Google Chrome Dev",
                 "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
@@ -98,8 +98,10 @@ class BrowserLauncher:
 
         # Check if path exists and is executable
         for path in possible_paths:
-            if os.path.isfile(path) and os.access(path, os.X_OK):
-                paths.append(path)
+            try:
+                paths.append(validate_automation_browser_path(path))
+            except BrowserPathError:
+                continue
 
         return paths
 
@@ -123,11 +125,12 @@ class BrowserLauncher:
         """
         Launch browser process
         """
+        browser_path = validate_automation_browser_path(browser_path)
         # Basic launch arguments
         args = [
             browser_path,
             f"--remote-debugging-port={debug_port}",
-            "--remote-debugging-address=0.0.0.0",  # Allow remote access
+            "--remote-debugging-address=127.0.0.1",
             "--no-first-run",
             "--no-default-browser-check",
             "--disable-background-timer-throttling",
@@ -139,7 +142,6 @@ class BrowserLauncher:
             "--disable-prompt-on-repost",
             "--disable-sync",
             "--disable-dev-shm-usage",  # Avoid shared memory issues
-            "--no-sandbox",  # Disable sandbox in CDP mode
             # Key anti-detection arguments
             "--disable-blink-features=AutomationControlled",  # Disable automation control flag
             "--exclude-switches=enable-automation",  # Exclude automation switch
@@ -153,10 +155,9 @@ class BrowserLauncher:
                 "--disable-gpu",
             ])
         else:
-            # Extra arguments for non-headless mode
-            args.extend([
-                "--start-maximized",  # Maximize window, more like real user
-            ])
+            # Do not force a size or maximized state. Chromium persists the
+            # user's last window placement in this crawler-only profile.
+            pass
 
         # User data directory
         if user_data_dir:
